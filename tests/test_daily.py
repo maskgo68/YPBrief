@@ -571,6 +571,39 @@ def test_digest_run_service_discovers_sources_processes_missing_and_records_run(
     assert [row["status"] for row in run_videos] == ["included", "included"]
 
 
+def test_digest_run_service_marks_no_updates_when_no_videos_match_window(tmp_path: Path) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    db.upsert_channel("UC123", "Test Channel", "https://youtube.com/channel/UC123")
+    source_id = db.upsert_source(
+        source_type="playlist",
+        source_name="Test Playlist",
+        youtube_id="PL123",
+        url="https://www.youtube.com/playlist?list=PL123",
+        channel_id="UC123",
+        channel_name="Test Channel",
+        playlist_id="PL123",
+    )
+
+    result = DigestRunService(
+        db=db,
+        youtube=FakeYouTube(),
+        processor=FakeProcessor(db),
+        digest_service=DailyDigestService(db, LenientFakeProvider(), tmp_path / "exports"),
+    ).run(
+        source_ids=[source_id],
+        run_date="2026-04-20",
+        window_days=1,
+        max_videos_per_source=10,
+    )
+
+    assert result["status"] == "no_updates"
+    assert result["included_count"] == 0
+    assert result["failed_count"] == 0
+    assert result["summary_id"] is None
+    assert result["error_message"] is None
+
+
 def test_digest_run_service_filters_private_video_and_continues_with_public_video(tmp_path: Path) -> None:
     db = Database(tmp_path / "ypbrief.db")
     db.initialize()
@@ -912,7 +945,7 @@ def test_digest_run_service_can_skip_failed_videos_when_retry_disabled(tmp_path:
     with db.connect() as conn:
         run_videos = conn.execute("SELECT * FROM DailyRunVideos WHERE run_id = ?", (result["run_id"],)).fetchall()
 
-    assert result["status"] == "failed"
+    assert result["status"] == "no_updates"
     assert processor.processed == []
     assert result["skipped_count"] == 1
     assert run_videos[0]["status"] == "skipped"

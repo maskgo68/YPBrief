@@ -110,6 +110,7 @@ const copy = {
     summarizeVideo: '开始总结',
     processingVideo: '处理中...',
     deliverAfterSummary: '完成后推送',
+    deliverAfterDigest: '生成后推送',
     pushTelegram: 'Telegram',
     pushFeishu: '飞书',
     pushEmail: 'Email',
@@ -355,6 +356,7 @@ const copy = {
     summarizeVideo: 'Summarize',
     processingVideo: 'Processing...',
     deliverAfterSummary: 'Deliver after summary',
+    deliverAfterDigest: 'Deliver after digest',
     pushTelegram: 'Telegram',
     pushFeishu: 'Feishu',
     pushEmail: 'Email',
@@ -1968,6 +1970,8 @@ function DigestsView({
   const [message, setMessage] = useState('')
   const [retrying, setRetrying] = useState('')
   const [deliveryChannels, setDeliveryChannels] = useState<DeliveryChannels>({ telegram: true, feishu: false, email: false })
+  const [deliverAfterRun, setDeliverAfterRun] = useState(false)
+  const [runDeliveryChannels, setRunDeliveryChannels] = useState<DeliveryChannels>({ telegram: true, feishu: false, email: false })
   const [delivering, setDelivering] = useState(false)
 
   useEffect(() => {
@@ -1997,6 +2001,10 @@ function DigestsView({
   const isCustomRange = timeMode === 'custom'
   const isAllTime = timeMode === 'all'
   const generate = async () => {
+    if (deliverAfterRun && !runDeliveryChannels.telegram && !runDeliveryChannels.feishu && !runDeliveryChannels.email) {
+      setMessage(t.selectDeliveryChannel)
+      return
+    }
     setRunning(true)
     setMessage('')
     try {
@@ -2015,9 +2023,17 @@ function DigestsView({
           process_missing_videos: true,
           retry_failed_once: true,
           digest_language: digestLanguage,
+          deliver_after_run: deliverAfterRun,
+          send_empty_digest: deliverAfterRun,
+          telegram_enabled: deliverAfterRun ? runDeliveryChannels.telegram : null,
+          feishu_enabled: deliverAfterRun ? runDeliveryChannels.feishu : null,
+          email_enabled: deliverAfterRun ? runDeliveryChannels.email : null,
         }),
       })
       setRun(result)
+      if (deliverAfterRun && result.deliveries) {
+        setMessage(deliveryStatusText(result.deliveries, t))
+      }
       await onChanged()
     } finally {
       setRunning(false)
@@ -2173,6 +2189,15 @@ function DigestsView({
         ) : (
           <p className="field-label">{t.unlimitedVideos}</p>
         )}
+        <div className="digest-run-delivery">
+          <label className="check-row">
+            <input type="checkbox" checked={deliverAfterRun} onChange={(event) => setDeliverAfterRun(event.target.checked)} />
+            {t.deliverAfterDigest}
+          </label>
+          {deliverAfterRun ? (
+            <DeliveryChannelPicker channels={runDeliveryChannels} onChange={setRunDeliveryChannels} t={t} />
+          ) : null}
+        </div>
         <button disabled={generateDisabled} onClick={generate}>
           {running ? 'Running...' : t.generateDigest}
         </button>

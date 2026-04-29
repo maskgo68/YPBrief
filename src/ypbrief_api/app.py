@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import secrets
+import tempfile
 import time
 from datetime import date
 from pathlib import Path
@@ -189,6 +190,11 @@ class DigestRunCreate(BaseModel):
     retry_failed_once: bool = True
     digest_language: str = "zh"
     run_date: str | None = None
+    deliver_after_run: bool = False
+    send_empty_digest: bool = False
+    telegram_enabled: bool | None = None
+    feishu_enabled: bool | None = None
+    email_enabled: bool | None = None
 
 
 class SchedulerRunNow(BaseModel):
@@ -618,10 +624,14 @@ def create_app(
     @app.get("/api/sources/export")
     def export_sources() -> dict[str, Any]:
         service = SourceService(db, YouTubeDataClient(settings.youtube_data_api_key or "not-required"))
-        temp_path = Path("sources.yaml")
-        service.export_yaml(temp_path)
-        content = temp_path.read_text(encoding="utf-8")
-        return {"filename": "sources.yaml", "content": content, "path": str(temp_path.resolve())}
+        with tempfile.NamedTemporaryFile("w+", suffix=".yaml", delete=False, encoding="utf-8") as temp:
+            temp_path = Path(temp.name)
+        try:
+            service.export_yaml(temp_path)
+            content = temp_path.read_text(encoding="utf-8")
+        finally:
+            temp_path.unlink(missing_ok=True)
+        return {"filename": "sources.yaml", "content": content, "path": "sources.yaml"}
 
     @app.get("/api/model-profiles")
     def list_model_profiles() -> list[dict[str, Any]]:
@@ -1277,7 +1287,7 @@ def create_app(
         if payload.max_videos_per_source is not None and payload.max_videos_per_source < 1:
             raise HTTPException(status_code=400, detail="max_videos_per_source must be at least 1 or null")
         try:
-            return runner.run(
+            result = runner.run(
                 source_ids=source_ids,
                 run_date=run_date,
                 window_days=window_days,
@@ -1287,6 +1297,9 @@ def create_app(
                 retry_failed_once=payload.retry_failed_once,
                 digest_language=payload.digest_language,
             )
+            if payload.deliver_after_run:
+                _attach_manual_delivery_result(db, settings, result, run_date, payload)
+            return result
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -1452,7 +1465,7 @@ def _sync_provider_to_env(env_file: Path, provider: str, config: dict[str, Any])
         updates[keys["api_key"]] = str(config["api_key"])
     if config.get("base_url"):
         updates[keys["base_url"]] = str(config["base_url"])
-    if config.get("default_model"):
+    if "default_model" in config:
         updates[keys["default_model"]] = str(config["default_model"])
     _update_env_file(env_file, updates)
 
@@ -1567,6 +1580,63 @@ def _delivery_env_updates(settings_data: dict[str, Any], payload: dict[str, Any]
     if "smtp_password" in payload:
         updates["SMTP_PASSWORD"] = payload.get("smtp_password") or ""
     return updates
+
+
+def _attach_manual_delivery_result(
+    db: Database,
+    settings: Settings,
+    result: dict[str, Any],
+    run_date: str,
+    payload: DigestRunCreate,
+) -> None:
+    delivery = DeliveryService(db, settings)
+    run_id = result.get("run_id")
+    summary_id = result.get("summary_id")
+    channel_flags = {
+        "telegram_enabled": payload.telegram_enabled,
+        "feishu_enabled": payload.feishu_enabled,
+        "email_enabled": payload.email_enabled,
+    }
+    if summary_id:
+        result["deliveries"] = delivery.send_summary(
+            int(summary_id),
+            int(run_id) if run_id else None,
+            **channel_flags,
+        )
+        return
+    is_no_updates = (
+        result.get("status") == "no_updates"
+        or (
+            int(result.get("included_count") or 0) == 0
+            and int(result.get("failed_count") or 0) == 0
+            and int(result.get("skipped_count") or 0) == 0
+        )
+    )
+    if is_no_updates:
+        deliveries = delivery.send_no_updates(
+            run_date,
+            payload.digest_language,
+            int(run_id) if run_id else None,
+            **channel_flags,
+        )
+        result["empty_digest_delivered"] = any(item["status"] == "success" for item in deliveries)
+        result["deliveries"] = deliveries
+        return
+    is_failed = (
+        result.get("status") == "failed"
+        or int(result.get("failed_count") or 0) > 0
+    )
+    if is_failed:
+        deliveries = delivery.send_failure_notice(
+            int(run_id),
+            run_date,
+            payload.digest_language,
+            **channel_flags,
+        ) if run_id else []
+        result["failure_notice_delivered"] = any(item["status"] == "success" for item in deliveries)
+        result["deliveries"] = deliveries
+        return
+    result["deliveries"] = []
 
 
 def _start_background_scheduler(app: FastAPI, db: Database, settings: Settings, digest_runner: Any | None) -> None:

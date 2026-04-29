@@ -278,6 +278,8 @@ export type DigestRun = {
   error_message?: string | null
   scheduled_job_id?: number | null
   scheduled_job_name?: string | null
+  deliveries?: DeliveryResult[]
+  empty_digest_delivered?: boolean
   videos?: Array<Record<string, string | number | null>>
 }
 

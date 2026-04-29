@@ -70,9 +70,14 @@ def get_effective_provider_config(db: Database, settings: Settings, provider: st
             "source": "default",
             "is_builtin": provider in BUILTIN_PROVIDER_DEFAULTS,
         }
+        row_values = {
+            key: value
+            for key, value in row.items()
+            if value is not None and (value != "" or key == "default_model")
+        }
         return {
             **defaults,
-            **{key: value for key, value in row.items() if value not in (None, "")},
+            **row_values,
             "provider": provider,
             "source": "database",
             "is_builtin": provider in BUILTIN_PROVIDER_DEFAULTS,

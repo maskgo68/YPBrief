@@ -257,8 +257,16 @@ class DigestRunService:
                 summary_id = digest.summary_id
                 _write_failed_manifest(digest.failed_manifest, failed, skipped)
 
-            status = "completed" if summary_id is not None else "failed"
-            self._complete_run(run_id, status, summary_id, len(unique_included), len(failed), len(skipped), None if summary_id else "No videos included")
+            if summary_id is not None:
+                status = "completed"
+                error_message = None
+            elif failed:
+                status = "failed"
+                error_message = "No videos included"
+            else:
+                status = "no_updates"
+                error_message = None
+            self._complete_run(run_id, status, summary_id, len(unique_included), len(failed), len(skipped), error_message)
             return self.get_run(run_id)
         except Exception as exc:
             self._complete_run(run_id, "failed", None, len(set(included)), len(failed), len(skipped), str(exc))

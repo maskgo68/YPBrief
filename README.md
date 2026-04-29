@@ -1,5 +1,7 @@
 # YPBrief
 
+[English](README-en.md) | 简体中文
+
 YouTube Podcast Brief.
 
 YPBrief 是一个自托管的 YouTube 播客与长视频简报工具。它会定期检查你关注的 YouTube 频道或播放列表，获取新视频的字幕，生成单视频总结，再合成为每日或定时简报，并通过 Web UI、Telegram、飞书或 Email 查看和接收。

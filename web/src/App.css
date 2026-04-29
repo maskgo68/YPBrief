@@ -538,6 +538,16 @@ button.compact,
   flex: 0 0 auto;
 }
 
+.digest-run-delivery {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0 4px;
+}
+
+.digest-run-delivery .delivery-picker {
+  justify-content: flex-start;
+}
+
 button.delivery-submit {
   background: var(--primary);
   border-color: var(--primary);

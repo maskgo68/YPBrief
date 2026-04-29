@@ -732,6 +732,30 @@ def test_api_source_groups_and_sources_yaml_round_trip(tmp_path: Path, monkeypat
     assert "group: investment" in exported.json()["content"]
 
 
+def test_api_sources_export_does_not_overwrite_local_sources_yaml(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    local_sources = Path("sources.yaml")
+    local_sources.write_text("private: keep-this-file\n", encoding="utf-8")
+    db.upsert_source(
+        source_type="channel",
+        source_name="Public Export Source",
+        youtube_id="UC123",
+        url="https://www.youtube.com/@PublicExportSource",
+        channel_id="UC123",
+        channel_name="Public Export Source",
+    )
+    client = TestClient(create_app(db=db, settings_override={"youtube_data_api_key": "test-key"}))
+
+    exported = client.get("/api/sources/export")
+
+    assert exported.status_code == 200
+    assert exported.json()["filename"] == "sources.yaml"
+    assert "Public Export Source" in exported.json()["content"]
+    assert local_sources.read_text(encoding="utf-8") == "private: keep-this-file\n"
+
+
 def test_api_source_group_assignment_can_be_set_and_cleared(tmp_path: Path) -> None:
     db = Database(tmp_path / "ypbrief.db")
     db.initialize()
@@ -1246,6 +1270,289 @@ def test_api_deliver_summary_respects_selected_channels(tmp_path: Path, monkeypa
     assert response.status_code == 200
     assert sent == ["telegram"]
     assert [item["channel"] for item in response.json()["deliveries"]] == ["telegram"]
+
+
+def test_api_manual_digest_run_can_deliver_generated_summary(tmp_path: Path, monkeypatch) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    source_id = db.upsert_source(
+        source_type="playlist",
+        source_name="Manual Source",
+        youtube_id="PLMANUAL",
+        url="https://www.youtube.com/playlist?list=PLMANUAL",
+        enabled=True,
+    )
+    summary_id = db.save_summary(
+        summary_type="digest",
+        content_markdown="# Manual Digest\n\nGenerated content.",
+        provider="gemini",
+        model="gemini-test",
+        range_start="2026-04-29",
+        range_end="2026-04-29",
+    )
+    sent: list[str] = []
+
+    class FakeRunner:
+        def run(self, **kwargs):
+            return {
+                "run_id": 77,
+                "run_type": "manual",
+                "status": "completed",
+                "summary_id": summary_id,
+                "included_count": 1,
+                "failed_count": 0,
+                "skipped_count": 0,
+            }
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, json, timeout):
+        sent.append(json["text"])
+        return FakeResponse()
+
+    monkeypatch.setattr("ypbrief.delivery.requests.post", fake_post)
+    client = TestClient(create_app(db=db, digest_runner=FakeRunner(), env_file=tmp_path / "key.env"))
+    client.patch(
+        "/api/delivery-settings",
+        json={"telegram_enabled": True, "telegram_bot_token": "token", "telegram_chat_id": "123456"},
+    )
+
+    response = client.post(
+        "/api/digest-runs",
+        json={
+            "source_ids": [source_id],
+            "window_days": 1,
+            "deliver_after_run": True,
+            "telegram_enabled": True,
+            "feishu_enabled": False,
+            "email_enabled": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["deliveries"][0]["channel"] == "telegram"
+    assert response.json()["deliveries"][0]["status"] == "success"
+    assert sent and "Generated content" in sent[0]
+
+
+def test_api_manual_digest_run_can_send_no_updates_notice_when_requested(tmp_path: Path, monkeypatch) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    source_id = db.upsert_source(
+        source_type="playlist",
+        source_name="Quiet Manual Source",
+        youtube_id="PLQUIETMANUAL",
+        url="https://www.youtube.com/playlist?list=PLQUIETMANUAL",
+        enabled=True,
+    )
+
+    class FakeRunner:
+        def run(self, **kwargs):
+            with db.connect() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO DailyRuns(run_type, status, window_start, window_end, source_ids_json, included_count, failed_count, skipped_count)
+                    VALUES ('manual', 'no_updates', '2026-04-28', '2026-04-29', ?, 0, 0, 0)
+                    """,
+                    (json.dumps(kwargs["source_ids"]),),
+                )
+            return {
+                "run_id": int(cursor.lastrowid),
+                "run_type": "manual",
+                "status": "no_updates",
+                "summary_id": None,
+                "included_count": 0,
+                "failed_count": 0,
+                "skipped_count": 0,
+            }
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, json, timeout):
+        assert "今天没有新视频更新" in json["text"]
+        return FakeResponse()
+
+    monkeypatch.setattr("ypbrief.delivery.requests.post", fake_post)
+    client = TestClient(create_app(db=db, digest_runner=FakeRunner(), env_file=tmp_path / "key.env"))
+    client.patch(
+        "/api/delivery-settings",
+        json={"telegram_enabled": True, "telegram_bot_token": "token", "telegram_chat_id": "123456"},
+    )
+
+    response = client.post(
+        "/api/digest-runs",
+        json={
+            "source_ids": [source_id],
+            "window_days": 1,
+            "deliver_after_run": True,
+            "send_empty_digest": True,
+            "telegram_enabled": True,
+            "feishu_enabled": False,
+            "email_enabled": False,
+            "digest_language": "zh",
+            "run_date": "2026-04-29",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "no_updates"
+    assert response.json()["empty_digest_delivered"] is True
+    assert response.json()["deliveries"][0]["channel"] == "telegram"
+
+
+def test_api_manual_digest_run_deliver_after_run_sends_no_updates_without_extra_flag(tmp_path: Path, monkeypatch) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    source_id = db.upsert_source(
+        source_type="playlist",
+        source_name="Quiet Manual Source",
+        youtube_id="PLQUIETMANUAL",
+        url="https://www.youtube.com/playlist?list=PLQUIETMANUAL",
+        enabled=True,
+    )
+
+    class FakeRunner:
+        def run(self, **kwargs):
+            with db.connect() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO DailyRuns(run_type, status, window_start, window_end, source_ids_json, included_count, failed_count, skipped_count)
+                    VALUES ('manual', 'no_updates', '2026-04-28', '2026-04-29', ?, 0, 0, 0)
+                    """,
+                    (json.dumps(kwargs["source_ids"]),),
+                )
+            return {
+                "run_id": int(cursor.lastrowid),
+                "run_type": "manual",
+                "status": "no_updates",
+                "summary_id": None,
+                "included_count": 0,
+                "failed_count": 0,
+                "skipped_count": 0,
+            }
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, json, timeout):
+        assert "今天没有新视频更新" in json["text"]
+        return FakeResponse()
+
+    monkeypatch.setattr("ypbrief.delivery.requests.post", fake_post)
+    client = TestClient(create_app(db=db, digest_runner=FakeRunner(), env_file=tmp_path / "key.env"))
+    client.patch(
+        "/api/delivery-settings",
+        json={"telegram_enabled": True, "telegram_bot_token": "token", "telegram_chat_id": "123456"},
+    )
+
+    response = client.post(
+        "/api/digest-runs",
+        json={
+            "source_ids": [source_id],
+            "window_days": 1,
+            "deliver_after_run": True,
+            "telegram_enabled": True,
+            "feishu_enabled": False,
+            "email_enabled": False,
+            "digest_language": "zh",
+            "run_date": "2026-04-29",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["empty_digest_delivered"] is True
+    assert response.json()["deliveries"][0]["channel"] == "telegram"
+
+
+def test_api_manual_digest_run_deliver_after_run_sends_failure_notice(tmp_path: Path, monkeypatch) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    source_id = db.upsert_source(
+        source_type="playlist",
+        source_name="Manual Failed Source",
+        youtube_id="PLFAILED",
+        url="https://www.youtube.com/playlist?list=PLFAILED",
+        channel_name="Manual Channel",
+        enabled=True,
+    )
+    db.upsert_channel("UCFAILED", "Manual Channel", "https://www.youtube.com/@ManualChannel")
+    db.upsert_video(
+        "manualfailed1",
+        "UCFAILED",
+        "Manual Failed Video",
+        "https://www.youtube.com/watch?v=manualfailed1",
+        "2026-04-29",
+    )
+
+    class FakeRunner:
+        def run(self, **kwargs):
+            with db.connect() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO DailyRuns(run_type, status, window_start, window_end, source_ids_json, failed_count, error_message)
+                    VALUES ('manual', 'failed', '2026-04-28', '2026-04-29', ?, 1, 'Could not fetch transcript')
+                    """,
+                    (json.dumps(kwargs["source_ids"]),),
+                )
+                run_id = int(cursor.lastrowid)
+                conn.execute(
+                    """
+                    INSERT INTO DailyRunVideos(run_id, video_id, source_id, status, action, error_message)
+                    VALUES (?, 'manualfailed1', ?, 'failed', 'process', 'Could not fetch transcript for manualfailed1')
+                    """,
+                    (run_id, source_id),
+                )
+            return {
+                "run_id": run_id,
+                "run_type": "manual",
+                "status": "failed",
+                "summary_id": None,
+                "included_count": 0,
+                "failed_count": 1,
+                "skipped_count": 0,
+                "error_message": "Could not fetch transcript",
+            }
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    sent: list[str] = []
+
+    def fake_post(url, json, timeout):
+        sent.append(json["text"])
+        return FakeResponse()
+
+    monkeypatch.setattr("ypbrief.delivery.requests.post", fake_post)
+    client = TestClient(create_app(db=db, digest_runner=FakeRunner(), env_file=tmp_path / "key.env"))
+    client.patch(
+        "/api/delivery-settings",
+        json={"telegram_enabled": True, "telegram_bot_token": "token", "telegram_chat_id": "123456"},
+    )
+
+    response = client.post(
+        "/api/digest-runs",
+        json={
+            "source_ids": [source_id],
+            "window_days": 1,
+            "deliver_after_run": True,
+            "telegram_enabled": True,
+            "feishu_enabled": False,
+            "email_enabled": False,
+            "digest_language": "zh",
+            "run_date": "2026-04-29",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["failure_notice_delivered"] is True
+    assert response.json()["deliveries"][0]["channel"] == "telegram"
+    assert "Manual Failed Video" in sent[0]
 
 
 def test_api_scheduled_job_run_now_uses_previous_day_and_selected_sources(tmp_path: Path) -> None:
@@ -1888,6 +2195,35 @@ def test_api_provider_update_syncs_key_env(tmp_path: Path) -> None:
     assert "XAI_API_KEY=xai-secret" in contents
     assert "XAI_BASE_URL=https://api.x.ai/v1" in contents
     assert "XAI_MODEL=grok-4" in contents
+
+
+def test_api_provider_update_clears_default_model_in_key_env(tmp_path: Path) -> None:
+    env_file = tmp_path / "key.env"
+    env_file.write_text(
+        "LLM_PROVIDER=xai\nLLM_MODEL=grok-active\nXAI_API_KEY=xai-secret\nXAI_BASE_URL=https://api.x.ai/v1\nXAI_MODEL=grok-old\n",
+        encoding="utf-8",
+    )
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    client = TestClient(create_app(db=db, env_file=env_file))
+
+    response = client.patch(
+        "/api/llm-providers/xai",
+        json={
+            "provider_type": "openai_compatible",
+            "display_name": "xAI",
+            "base_url": "https://api.x.ai/v1",
+            "api_key": "xai-secret",
+            "default_model": "",
+            "enabled": True,
+        },
+    )
+
+    contents = env_file.read_text(encoding="utf-8")
+    assert response.status_code == 200
+    assert "XAI_MODEL=grok-old" not in contents
+    assert "XAI_MODEL=" in contents
+    assert "LLM_MODEL=grok-active" in contents
 
 
 def test_api_active_model_syncs_key_env(tmp_path: Path) -> None:
