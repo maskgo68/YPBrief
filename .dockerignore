@@ -60,6 +60,7 @@ PRD*.md
 # GitHub Actions Lite runs from the repository, not from the Docker image.
 .git/
 .github/
+examples/
 tests/
 scripts/
 run.bat

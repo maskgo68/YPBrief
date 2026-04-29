@@ -46,6 +46,15 @@ YouTube channels / playlists / single videos
 
 YPBrief uses the YouTube Data API for metadata, `yt-dlp` for subtitles, and your configured LLM provider for summarization.
 
+## Real Run Examples
+
+The [`examples/`](examples/) folder shows a set of real run examples. You can review them first to see the output:
+
+- [Chinese daily report example](examples/Daily%20Report-Invest%20Daily%20Report-260428-zh.md)
+- [English daily report example](examples/Daily%20Report-Invest%20Daily%20Report-260428-en.md)
+- [Chinese video summary example](examples/Video%20Summary-Invest%20Like%20The%20Best%20-%20Legendary%20Trader%20Paul%20Tudor%20Jones%20on%20AI%20Risk,%20Bubbles%20and%20Buffett%20-%20260428-zh.md)
+- [English video summary example](examples/Video%20Summary-Invest%20Like%20The%20Best%20-%20Legendary%20Trader%20Paul%20Tudor%20Jones%20on%20AI%20Risk,%20Bubbles%20and%20Buffett%20-%20260428-en.md)
+
 ## Running Modes
 
 YPBrief has three common running modes:

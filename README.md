@@ -46,6 +46,15 @@ YouTube 频道 / 播放列表 / 单视频
 
 YPBrief 使用 YouTube Data API 获取元数据，使用 `yt-dlp` 获取字幕，使用你配置的 LLM provider 生成总结。
 
+## 实际运行案例
+
+仓库中的 [`examples/`](examples/) 展示了一组实际运行案例，可以先查看效果：
+
+- [中文日报案例](examples/Daily%20Report-Invest%20Daily%20Report-260428-zh.md)
+- [English daily report example](examples/Daily%20Report-Invest%20Daily%20Report-260428-en.md)
+- [中文单视频总结案例](examples/Video%20Summary-Invest%20Like%20The%20Best%20-%20Legendary%20Trader%20Paul%20Tudor%20Jones%20on%20AI%20Risk,%20Bubbles%20and%20Buffett%20-%20260428-zh.md)
+- [English video summary example](examples/Video%20Summary-Invest%20Like%20The%20Best%20-%20Legendary%20Trader%20Paul%20Tudor%20Jones%20on%20AI%20Risk,%20Bubbles%20and%20Buffett%20-%20260428-en.md)
+
 ## 运行方式
 
 YPBrief 有三种常见运行方式：

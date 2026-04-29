@@ -57,6 +57,7 @@ logs/
 
 # Local working snapshots and planning notes
 # Keep only public *.example templates in git.
+# Keep sanitized public run samples in examples/ so GitHub visitors can preview output.
 sources.yaml
 !sources.example.yaml
 prompts.yaml
