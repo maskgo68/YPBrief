@@ -1,0 +1,44 @@
+# Example source/group snapshot for manual import/reference.
+# Runtime sources live in SQLite. Docker first boot does not copy this file.
+# Use the Web UI Sources page to add sources, or import/save/export your own
+# sources.yaml snapshot when needed.
+
+groups:
+- group_name: investing
+  display_name: Investing
+  description: Market, business, and investing podcasts
+  enabled: true
+  digest_title: Investing Daily Digest
+  digest_language: zh
+  run_time: 07:00
+  timezone: Asia/Shanghai
+  max_videos_per_source: 10
+- group_name: technology
+  display_name: Technology
+  description: Technology and AI podcasts
+  enabled: true
+  digest_title: Technology Daily Digest
+  digest_language: zh
+  run_time: 07:00
+  timezone: Asia/Shanghai
+  max_videos_per_source: 10
+
+sources:
+- type: playlist
+  name: Example Investing Playlist
+  display_name: Example Investing Podcast
+  url: https://www.youtube.com/playlist?list=PL_EXAMPLE_INVESTING
+  enabled: true
+  group: investing
+- type: channel
+  name: Bg2
+  display_name: Bg2
+  url: https://www.youtube.com/@Bg2Pod
+  enabled: true
+  group: technology
+- type: video
+  name: Example Single Video
+  display_name: Example One-off Video Source
+  url: https://www.youtube.com/watch?v=VIDEO_ID
+  enabled: false
+  group: technology

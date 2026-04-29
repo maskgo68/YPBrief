@@ -1,0 +1,17 @@
+html {
+  background: #f4f1e8;
+}
+
+body {
+  margin: 0;
+  font-family:
+    "Aptos",
+    "Segoe UI",
+    "PingFang SC",
+    "Microsoft YaHei",
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}

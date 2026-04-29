@@ -1,0 +1,97 @@
+# Local secrets and credentials
+key.env
+key.env.*
+!key.env.example
+.env
+.env.*
+.envrc
+secrets/
+*cookies*.txt
+*.key
+*.pem
+*.crt
+*.cer
+*.der
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.secret
+
+# Local runtime data
+data/
+exports/
+actions-exports/
+logs/
+.ypbrief-actions/
+*.log
+*.out.log
+*.err.log
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.dump
+*.sql
+*.tmp
+*.bak
+*.old
+*.tar
+*.tar.gz
+*.tgz
+
+# Local working snapshots, public source/prompt examples, and planning notes.
+# Docker only needs key.env.example plus application code; source/prompt YAML
+# examples are for GitHub/local users and should not enter the image context.
+sources.yaml
+sources.example.yaml
+prompts.yaml
+prompts.example.yaml
+PRD doc/
+Project Evaluation/
+# Root-level fallbacks in case internal docs are created outside PRD doc/.
+findings.md
+progress.md
+task_plan.md
+PRD*.md
+
+# Files useful in the source tree but not needed to build the runtime image.
+# GitHub Actions Lite runs from the repository, not from the Docker image.
+.git/
+.github/
+tests/
+scripts/
+run.bat
+README*.md
+docker-compose.yml
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Frontend dependencies and build output
+web/node_modules/
+web/dist/
+web/.vite/
+web/.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

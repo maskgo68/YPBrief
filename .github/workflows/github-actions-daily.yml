@@ -1,0 +1,175 @@
+name: YPBrief Daily
+
+on:
+  schedule:
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+    inputs:
+      window:
+        description: "Digest window"
+        type: choice
+        options:
+          - last_1
+          - last_3
+          - last_7
+          - all_time
+        default: last_1
+      group:
+        description: "Source group name, or all"
+        type: string
+        default: all
+      language:
+        description: "Digest language"
+        type: choice
+        options:
+          - zh
+          - en
+        default: zh
+      max_videos_per_source:
+        description: "Max videos per source. Use 0 or all for unlimited."
+        type: string
+        default: "10"
+      dry_run:
+        description: "Run without delivery or commit"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ypbrief-actions-daily
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      ACTION_INPUT_WINDOW: ${{ github.event.inputs.window || vars.YPBRIEF_ACTIONS_WINDOW || 'last_1' }}
+      ACTION_INPUT_GROUP: ${{ github.event.inputs.group || vars.YPBRIEF_ACTIONS_GROUP || 'all' }}
+      ACTION_INPUT_LANGUAGE: ${{ github.event.inputs.language || vars.YPBRIEF_ACTIONS_LANGUAGE || 'zh' }}
+      ACTION_INPUT_MAX_VIDEOS_PER_SOURCE: ${{ github.event.inputs.max_videos_per_source || vars.YPBRIEF_ACTIONS_MAX_VIDEOS_PER_SOURCE || '10' }}
+      ACTION_INPUT_DRY_RUN: ${{ github.event.inputs.dry_run || vars.YPBRIEF_ACTIONS_DRY_RUN || 'false' }}
+      YPBRIEF_ACTIONS_TIMEZONE: ${{ vars.YPBRIEF_ACTIONS_TIMEZONE || 'Asia/Shanghai' }}
+      YPBRIEF_ACTIONS_SEND_EMPTY_DIGEST: ${{ vars.YPBRIEF_ACTIONS_SEND_EMPTY_DIGEST || 'true' }}
+
+      YOUTUBE_DATA_API_KEY: ${{ secrets.YOUTUBE_DATA_API_KEY }}
+      YOUTUBE_PROXY_ENABLED: ${{ secrets.YOUTUBE_PROXY_ENABLED || 'false' }}
+      YOUTUBE_PROXY_HTTP: ${{ secrets.YOUTUBE_PROXY_HTTP }}
+      YOUTUBE_PROXY_HTTPS: ${{ secrets.YOUTUBE_PROXY_HTTPS }}
+      IPROYAL_PROXY_HOST: ${{ secrets.IPROYAL_PROXY_HOST }}
+      IPROYAL_PROXY_PORT: ${{ secrets.IPROYAL_PROXY_PORT }}
+      IPROYAL_PROXY_USERNAME: ${{ secrets.IPROYAL_PROXY_USERNAME }}
+      IPROYAL_PROXY_PASSWORD: ${{ secrets.IPROYAL_PROXY_PASSWORD }}
+      YT_DLP_COOKIES_FROM_BROWSER: ${{ secrets.YT_DLP_COOKIES_FROM_BROWSER }}
+      YT_DLP_PROXY: ${{ secrets.YT_DLP_PROXY }}
+
+      LLM_PROVIDER: ${{ secrets.LLM_PROVIDER || vars.LLM_PROVIDER || 'gemini' }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL || vars.LLM_MODEL }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL || vars.OPENAI_BASE_URL }}
+      OPENAI_MODEL: ${{ secrets.OPENAI_MODEL || vars.OPENAI_MODEL }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_BASE_URL: ${{ secrets.GEMINI_BASE_URL || vars.GEMINI_BASE_URL }}
+      GEMINI_MODEL: ${{ secrets.GEMINI_MODEL || vars.GEMINI_MODEL }}
+      SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
+      SILICONFLOW_BASE_URL: ${{ secrets.SILICONFLOW_BASE_URL || vars.SILICONFLOW_BASE_URL }}
+      SILICONFLOW_MODEL: ${{ secrets.SILICONFLOW_MODEL || vars.SILICONFLOW_MODEL }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL || vars.ANTHROPIC_BASE_URL }}
+      CLAUDE_MODEL: ${{ secrets.CLAUDE_MODEL || vars.CLAUDE_MODEL }}
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+      XAI_BASE_URL: ${{ secrets.XAI_BASE_URL || vars.XAI_BASE_URL }}
+      XAI_MODEL: ${{ secrets.XAI_MODEL || vars.XAI_MODEL }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      DEEPSEEK_BASE_URL: ${{ secrets.DEEPSEEK_BASE_URL || vars.DEEPSEEK_BASE_URL }}
+      DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL || vars.DEEPSEEK_MODEL }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENROUTER_BASE_URL: ${{ secrets.OPENROUTER_BASE_URL || vars.OPENROUTER_BASE_URL }}
+      OPENROUTER_MODEL: ${{ secrets.OPENROUTER_MODEL || vars.OPENROUTER_MODEL }}
+      CUSTOM_OPENAI_API_KEY: ${{ secrets.CUSTOM_OPENAI_API_KEY }}
+      CUSTOM_OPENAI_BASE_URL: ${{ secrets.CUSTOM_OPENAI_BASE_URL || vars.CUSTOM_OPENAI_BASE_URL }}
+      CUSTOM_OPENAI_MODEL: ${{ secrets.CUSTOM_OPENAI_MODEL || vars.CUSTOM_OPENAI_MODEL }}
+
+      TELEGRAM_ENABLED: ${{ secrets.TELEGRAM_ENABLED || vars.TELEGRAM_ENABLED || 'false' }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      TELEGRAM_PARSE_MODE: ${{ vars.TELEGRAM_PARSE_MODE || 'Markdown' }}
+      TELEGRAM_SEND_AS_FILE_IF_TOO_LONG: ${{ vars.TELEGRAM_SEND_AS_FILE_IF_TOO_LONG || 'true' }}
+      EMAIL_ENABLED: ${{ secrets.EMAIL_ENABLED || vars.EMAIL_ENABLED || 'false' }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT || vars.SMTP_PORT || '587' }}
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      SMTP_USE_TLS: ${{ vars.SMTP_USE_TLS || 'true' }}
+      SMTP_USE_SSL: ${{ vars.SMTP_USE_SSL || 'false' }}
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+      EMAIL_TO: ${{ secrets.EMAIL_TO }}
+      EMAIL_SUBJECT_TEMPLATE: ${{ vars.EMAIL_SUBJECT_TEMPLATE || 'YPBrief Daily Podcast Digest - {{ run_date }}' }}
+      EMAIL_ATTACH_MARKDOWN: ${{ vars.EMAIL_ATTACH_MARKDOWN || 'true' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install YPBrief dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[transcripts,llm]"
+
+      - name: Run YPBrief daily digest
+        run: python scripts/github_actions_daily.py
+
+      - name: Upload Markdown artifacts
+        uses: actions/upload-artifact@v4
+        if: ${{ always() && github.event.repository.private == true }}
+        with:
+          name: ypbrief-daily-markdown
+          if-no-files-found: ignore
+          path: |
+            actions-exports/daily/**/*.md
+            actions-exports/videos/**/summary.md
+
+      - name: Commit allowed Markdown outputs
+        if: ${{ env.ACTION_INPUT_DRY_RUN != 'true' && github.event.repository.private == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          shopt -s globstar nullglob
+
+          [ -f sources.yaml ] && git add -f -- sources.yaml
+          [ -f prompts.yaml ] && git add -f -- prompts.yaml
+
+          daily_files=(actions-exports/daily/**/*.md)
+          summary_files=(actions-exports/videos/**/summary.md)
+          if [ "${#daily_files[@]}" -gt 0 ]; then
+            git add -f -- "${daily_files[@]}"
+          fi
+          if [ "${#summary_files[@]}" -gt 0 ]; then
+            git add -f -- "${summary_files[@]}"
+          fi
+
+          git status --short
+          if git diff --cached --quiet; then
+            echo "No YPBrief Markdown changes to commit."
+          else
+            git commit -m "chore(actions): add YPBrief digest for ${ACTION_INPUT_RUN_DATE:-daily run}"
+            git push
+          fi
+
+      - name: Dry run notice
+        if: ${{ env.ACTION_INPUT_DRY_RUN == 'true' }}
+        run: echo "Dry run enabled; delivery and git commit were skipped by the script/workflow."
+
+      - name: Public repository safety notice
+        if: ${{ env.ACTION_INPUT_DRY_RUN != 'true' && github.event.repository.private != true }}
+        run: echo "Public repository detected; Markdown artifacts and git commit are disabled to avoid publishing private sources or summaries."

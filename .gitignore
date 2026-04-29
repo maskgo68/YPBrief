@@ -1,0 +1,86 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Local secrets
+key.env
+key.env.*
+!key.env.example
+.env
+.env.*
+.envrc
+secrets/
+*cookies*.txt
+*.key
+*.pem
+*.crt
+*.cer
+*.der
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.secret
+
+# Local runtime data
+data/
+exports/
+actions-exports/
+logs/
+.ypbrief-actions/
+*.log
+*.out.log
+*.err.log
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.dump
+*.sql
+*.tmp
+*.bak
+*.old
+*.tar
+*.tar.gz
+*.tgz
+
+# Local working snapshots and planning notes
+# Keep only public *.example templates in git.
+sources.yaml
+!sources.example.yaml
+prompts.yaml
+!prompts.example.yaml
+PRD doc/
+Project Evaluation/
+# Root-level fallbacks in case internal docs are created outside PRD doc/.
+findings.md
+progress.md
+task_plan.md
+PRD*.md
+
+# Frontend
+web/node_modules/
+web/dist/
+web/.vite/
+web/.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

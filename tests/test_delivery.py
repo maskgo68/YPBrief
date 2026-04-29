@@ -1,0 +1,239 @@
+from pathlib import Path
+
+import requests
+
+from ypbrief.config import Settings
+from ypbrief.database import Database
+from ypbrief.delivery import DeliveryService
+
+
+def test_telegram_delivery_splits_long_digest_into_multiple_messages(tmp_path: Path, monkeypatch) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    service = DeliveryService(db, Settings(telegram_enabled="true", telegram_bot_token="123456:secret", telegram_chat_id="1234567890"))
+    posted: list[dict] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_post(url, json, timeout):
+        posted.append(json)
+        return FakeResponse()
+
+    monkeypatch.setattr("ypbrief.delivery.requests.post", fake_post)
+    text = "\n\n".join([f"## Section {index}\n" + ("内容 " * 500) for index in range(1, 9)])
+
+    result = service.send_text(text, run_date="2026-04-26")
+
+    assert result[0]["status"] == "success"
+    assert result[0]["channel"] == "telegram"
+    assert len(posted) > 1
+    assert all(len(item["text"]) <= 4096 for item in posted)
+    assert posted[0]["text"].startswith("[1/")
+    assert "Section 8" in posted[-1]["text"]
+
+
+def test_telegram_delivery_retries_parse_errors_as_plain_text(tmp_path: Path, monkeypatch) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    service = DeliveryService(
+        db,
+        Settings(
+            telegram_enabled="true",
+            telegram_bot_token="123456:secret",
+            telegram_chat_id="1234567890",
+            telegram_parse_mode="Markdown",
+        ),
+    )
+    posted: list[dict] = []
+
+    class FakeResponse:
+        text = '{"ok":false,"description":"Bad Request: can\'t parse entities"}'
+
+        def raise_for_status(self) -> None:
+            raise requests.HTTPError("400 Client Error", response=self)
+
+    class OkResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_post(url, json, timeout):
+        posted.append(json)
+        if len(posted) == 1:
+            return FakeResponse()
+        return OkResponse()
+
+    monkeypatch.setattr("ypbrief.delivery.requests.post", fake_post)
+
+    result = service.send_text("### A markdown-ish digest with _unbalanced text", run_date="2026-04-26")
+
+    assert result[0]["status"] == "success"
+    assert len(posted) == 2
+    assert posted[0]["parse_mode"] == "Markdown"
+    assert "parse_mode" not in posted[1]
+
+
+def test_send_summary_replaces_digest_title_with_scheduled_job_name(tmp_path: Path, monkeypatch) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    job = db.save_scheduled_job(job_name="Investment Morning Brief")
+    summary_id = db.save_summary(
+        summary_type="digest",
+        content_markdown="# Daily Podcast Digest - 2026-04-27\n\nBody",
+        provider="grok",
+        model="grok-test",
+        range_start="2026-04-27",
+        range_end="2026-04-27",
+    )
+    with db.connect() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO DailyRuns(
+                run_type, status, window_start, window_end, source_ids_json,
+                summary_id, included_count, scheduled_job_id
+            )
+            VALUES ('scheduled', 'completed', '2026-04-27', '2026-04-27', '[]', ?, 3, ?)
+            """,
+            (summary_id, job["job_id"]),
+        )
+        run_id = int(cursor.lastrowid)
+    service = DeliveryService(db, Settings(telegram_enabled="true", telegram_bot_token="123456:secret", telegram_chat_id="1234567890"))
+    posted: list[dict] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_post(url, json, timeout):
+        posted.append(json)
+        return FakeResponse()
+
+    monkeypatch.setattr("ypbrief.delivery.requests.post", fake_post)
+
+    result = service.send_summary(summary_id, run_id=run_id)
+
+    assert result[0]["status"] == "success"
+    assert posted[0]["text"].startswith("# Investment Morning Brief - 2026-04-27")
+    assert "Daily Podcast Digest" not in posted[0]["text"].splitlines()[0]
+    assert "Body" in posted[0]["text"]
+
+
+def test_send_summary_replaces_video_title_for_single_video(tmp_path: Path, monkeypatch) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    db.upsert_channel("UC123", "Podcast", "https://youtube.com/channel/UC123")
+    db.upsert_video("vid1", "UC123", "A Sharp Market Conversation", "https://youtu.be/vid1")
+    summary_id = db.save_summary(
+        summary_type="video",
+        video_id="vid1",
+        content_markdown="# Podcast Name\n\nBody",
+        provider="gemini",
+        model="gemini-test",
+    )
+    service = DeliveryService(db, Settings(telegram_enabled="true", telegram_bot_token="123456:secret", telegram_chat_id="1234567890"))
+    posted: list[dict] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_post(url, json, timeout):
+        posted.append(json)
+        return FakeResponse()
+
+    monkeypatch.setattr("ypbrief.delivery.requests.post", fake_post)
+
+    result = service.send_summary(summary_id)
+
+    assert result[0]["status"] == "success"
+    assert posted[0]["text"].startswith("# Video Summary - A Sharp Market Conversation")
+    assert "Body" in posted[0]["text"]
+
+
+def test_email_delivery_attaches_markdown_when_enabled(tmp_path: Path, monkeypatch) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    service = DeliveryService(
+        db,
+        Settings(
+            email_enabled="true",
+            smtp_host="smtp.example.test",
+            smtp_port="587",
+            smtp_use_tls="false",
+            email_from="from@example.test",
+            email_to="to@example.test",
+            email_attach_markdown="true",
+        ),
+    )
+    sent_messages = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout):
+            self.host = host
+            self.port = port
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def starttls(self):
+            raise AssertionError("TLS should be disabled in this test")
+
+        def login(self, username, password):
+            raise AssertionError("login should not be called in this test")
+
+        def send_message(self, message):
+            sent_messages.append(message)
+
+    monkeypatch.setattr("ypbrief.delivery.smtplib.SMTP", FakeSMTP)
+
+    result = service.send_text("# Digest\n\nBody", run_date="2026-04-28", telegram_enabled=False, email_enabled=True)
+
+    assert result[0]["status"] == "success"
+    assert sent_messages[0].is_multipart()
+    attachments = list(sent_messages[0].iter_attachments())
+    assert len(attachments) == 1
+    assert attachments[0].get_filename() == "ypbrief-digest-2026-04-28.md"
+    assert attachments[0].get_content().strip() == "# Digest\n\nBody"
+
+
+def test_email_delivery_does_not_attach_markdown_when_disabled(tmp_path: Path, monkeypatch) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    service = DeliveryService(
+        db,
+        Settings(
+            email_enabled="true",
+            smtp_host="smtp.example.test",
+            smtp_port="587",
+            smtp_use_tls="false",
+            email_from="from@example.test",
+            email_to="to@example.test",
+            email_attach_markdown="false",
+        ),
+    )
+    sent_messages = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def send_message(self, message):
+            sent_messages.append(message)
+
+    monkeypatch.setattr("ypbrief.delivery.smtplib.SMTP", FakeSMTP)
+
+    result = service.send_text("# Digest\n\nBody", run_date="2026-04-28", telegram_enabled=False, email_enabled=True)
+
+    assert result[0]["status"] == "success"
+    assert not sent_messages[0].is_multipart()

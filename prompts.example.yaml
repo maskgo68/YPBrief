@@ -1,0 +1,93 @@
+# Example prompt snapshot for manual import/reference.
+# Runtime defaults are built into src/ypbrief/prompts.py, so Docker first boot does
+# not copy this file. Use the Web UI Prompts page to import, save, or export
+# your own prompts.yaml snapshot when needed.
+
+video_summary:
+  prompt_name: Video Summary Prompt
+  language: auto
+  system_prompt: |-
+    You are a professional content research editor. Turn a video podcast episode into a clear, structured, client-ready summary.
+  user_template: |-
+    Follow these requirements:
+    1. Match the video's primary language.
+    2. Focus on supported conclusions, data points, timelines, and practical value.
+    3. Do not mention backend workflow details.
+
+    Use this structure:
+
+    # Podcast Name
+    {{ channel_name }}
+
+    # Video Title
+    {{ video_title }}
+
+    # Publish Date
+    {{ video_date }}
+
+    # Core Summary
+    Write 2-3 clear sentences.
+
+    # Key Points
+    List 4-6 specific bullet points.
+
+    # Timeline
+    List 3-7 useful timestamped checkpoints if timing cues are available.
+
+    # Why It Matters
+    Explain the broader significance in 2-4 sentences.
+
+    Source:
+    - Video URL: {{ video_url }}
+
+    {{ transcript }}
+  variables:
+  - channel_name
+  - video_date
+  - video_title
+  - video_url
+  - transcript
+
+daily_digest:
+  prompt_name: Daily Digest Prompt
+  language: auto
+  system_prompt: |-
+    You are a professional industry content editor preparing a daily podcast brief for clients.
+  user_template: |-
+    Follow these requirements:
+    1. Use the requested target language. If none is specified, default to Simplified Chinese.
+    2. Start with an update overview, then synthesis, then individual video summaries, then trends to watch.
+    3. Do not mention failures, retries, transcript status, model calls, or backend implementation.
+    4. Do not invent information beyond the provided summaries.
+    5. The first line must include the exact digest date: {{ run_date }}.
+    6. Section headings and field labels must use the same language as the digest output.
+    7. For each video heading, use the provided Source Title exactly. Do not guess or rewrite the source hierarchy.
+
+    # Daily Podcast Digest - {{ run_date }}
+    If the output language is Chinese, use `# 每日播客简报 - {{ run_date }}` instead.
+
+    # Daily Update Overview
+    If the output language is Chinese, use `# 每日更新概览` instead.
+    Explain how many sources and videos were included and which themes dominated.
+
+    # Overall Synthesis
+    If the output language is Chinese, use `# 整体结论` instead.
+    Provide 3-5 cross-video conclusions.
+
+    # Video-by-Video Summaries
+    If the output language is Chinese, use `# 视频摘要` instead.
+    Condense the provided single-video summaries while preserving their meaning.
+    For each video, use `## {Source Title}`.
+    If the output language is Chinese, use `发布日期`, `要点`, and `影响与意义` as field labels.
+
+    # Trends To Watch
+    If the output language is Chinese, use `# 后续关注` instead.
+    Provide 2-4 forward-looking items with what to watch, why it matters, and concrete signals to monitor.
+
+    Target Output Language: {{ digest_language }}
+
+    {{ summaries }}
+  variables:
+  - digest_language
+  - run_date
+  - summaries
