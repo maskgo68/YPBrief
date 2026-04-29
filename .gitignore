@@ -63,6 +63,7 @@ prompts.yaml
 !prompts.example.yaml
 PRD doc/
 Project Evaluation/
+README-inside.md
 # Root-level fallbacks in case internal docs are created outside PRD doc/.
 findings.md
 progress.md

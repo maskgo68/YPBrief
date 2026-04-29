@@ -376,6 +376,12 @@ ypbrief --env-file key.env video process "https://www.youtube.com/watch?v=VIDEO_
 ypbrief --env-file key.env summarize video VIDEO_ID
 ```
 
+## 未来方向
+
+YPBrief 后续计划抽象成可被 Agent 调用的能力层，例如 Skills 或 MCP。目标是让 OpenCLAW、Claude Code、各类 Agent 和自动化工作流可以直接调用 YPBrief 的核心能力，包括来源查询、视频转录、单视频总结、日报生成、失败排查和内容推送。
+
+完整 Web UI 和 Docker/VPS 部署仍会作为主线形态保留；Skills / MCP 更偏向把 YPBrief 变成可组合的工具能力，方便接入个人助理、研究 Agent、投资分析 Agent 或团队内部自动化系统。
+
 ## 安全提醒
 
 如果把 YPBrief 部署到公网，请务必设置强访问密码，并妥善保护服务器，避免暴露`key.env`。
