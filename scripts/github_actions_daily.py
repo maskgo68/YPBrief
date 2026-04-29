@@ -82,6 +82,9 @@ ENV_KEYS = [
     "TELEGRAM_CHAT_ID",
     "TELEGRAM_PARSE_MODE",
     "TELEGRAM_SEND_AS_FILE_IF_TOO_LONG",
+    "FEISHU_ENABLED",
+    "FEISHU_WEBHOOK_URL",
+    "FEISHU_SECRET",
     "EMAIL_ENABLED",
     "SMTP_HOST",
     "SMTP_PORT",
@@ -190,6 +193,9 @@ def sync_delivery_settings_from_env(db: Database, settings: Settings) -> dict:
         "telegram_chat_id": settings.telegram_chat_id,
         "telegram_parse_mode": settings.telegram_parse_mode or "Markdown",
         "telegram_send_as_file_if_too_long": as_bool(settings.telegram_send_as_file_if_too_long),
+        "feishu_enabled": as_bool(settings.feishu_enabled),
+        "feishu_webhook_url": settings.feishu_webhook_url,
+        "feishu_secret": settings.feishu_secret,
         "email_enabled": as_bool(settings.email_enabled),
         "smtp_host": settings.smtp_host,
         "smtp_port": int(settings.smtp_port or 587),
@@ -259,6 +265,25 @@ def delivery_result_lines(deliveries: list[dict]) -> list[str]:
     return lines
 
 
+def is_failed_without_summary(run_result: dict) -> bool:
+    return (
+        not run_result.get("summary_id")
+        and (
+            run_result.get("status") == "failed"
+            or int(run_result.get("failed_count") or 0) > 0
+        )
+    )
+
+
+def is_no_updates(run_result: dict) -> bool:
+    return (
+        not run_result.get("summary_id")
+        and int(run_result.get("included_count") or 0) == 0
+        and int(run_result.get("failed_count") or 0) == 0
+        and int(run_result.get("skipped_count") or 0) == 0
+    )
+
+
 def run(config: ActionsConfig, root: Path | None = None, env: dict[str, str] | None = None) -> dict:
     root = Path(root or Path.cwd())
     sources_path = root / "sources.yaml"
@@ -310,7 +335,13 @@ def run(config: ActionsConfig, root: Path | None = None, env: dict[str, str] | N
                 int(summary_id),
                 run_id=int(run_result["run_id"]),
             )
-        elif not summary_id and config.send_empty_digest and not config.dry_run:
+        elif is_failed_without_summary(run_result) and not config.dry_run:
+            deliveries = DeliveryService(db, settings).send_failure_notice(
+                int(run_result["run_id"]),
+                config.run_date,
+                config.language,
+            )
+        elif is_no_updates(run_result) and config.send_empty_digest and not config.dry_run:
             deliveries = DeliveryService(db, settings).send_no_updates(
                 config.run_date,
                 config.language,

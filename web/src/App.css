@@ -1103,7 +1103,8 @@ textarea.short {
 .form-field.wide,
 .form-actions.wide,
 .check-row.wide,
-.scope-picker.wide {
+.scope-picker.wide,
+.proxy-advanced.wide {
   grid-column: 1 / -1;
 }
 
@@ -1217,12 +1218,50 @@ textarea.short {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.proxy-form .form-field small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
 .proxy-toggle {
   padding: 8px 9px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
   font-weight: 700;
+}
+
+.proxy-advanced {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fbfcfa;
+}
+
+.proxy-advanced summary {
+  cursor: pointer;
+  padding: 9px 10px;
+  font-weight: 760;
+}
+
+.proxy-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+  padding: 0 10px 10px;
+}
+
+.proxy-split-heading {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 3px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+  margin-top: 2px;
+}
+
+.proxy-split-heading span {
+  color: var(--muted);
+  line-height: 1.35;
 }
 
 .model-table {

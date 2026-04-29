@@ -79,6 +79,9 @@ class Settings:
     telegram_bot_public_base_url: str = ""
     telegram_bot_max_links_per_message: str = "1"
     telegram_bot_reuse_existing_summary: str = "true"
+    feishu_enabled: str = "false"
+    feishu_webhook_url: str = ""
+    feishu_secret: str = ""
     email_enabled: str = "false"
     smtp_host: str = ""
     smtp_port: str = "587"
@@ -211,6 +214,9 @@ _ENV_TO_FIELD = {
     "TELEGRAM_BOT_PUBLIC_BASE_URL": "telegram_bot_public_base_url",
     "TELEGRAM_BOT_MAX_LINKS_PER_MESSAGE": "telegram_bot_max_links_per_message",
     "TELEGRAM_BOT_REUSE_EXISTING_SUMMARY": "telegram_bot_reuse_existing_summary",
+    "FEISHU_ENABLED": "feishu_enabled",
+    "FEISHU_WEBHOOK_URL": "feishu_webhook_url",
+    "FEISHU_SECRET": "feishu_secret",
     "EMAIL_ENABLED": "email_enabled",
     "SMTP_HOST": "smtp_host",
     "SMTP_PORT": "smtp_port",

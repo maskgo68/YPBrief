@@ -98,6 +98,9 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       TELEGRAM_PARSE_MODE: ${{ vars.TELEGRAM_PARSE_MODE || 'Markdown' }}
       TELEGRAM_SEND_AS_FILE_IF_TOO_LONG: ${{ vars.TELEGRAM_SEND_AS_FILE_IF_TOO_LONG || 'true' }}
+      FEISHU_ENABLED: ${{ secrets.FEISHU_ENABLED || vars.FEISHU_ENABLED || 'false' }}
+      FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+      FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
       EMAIL_ENABLED: ${{ secrets.EMAIL_ENABLED || vars.EMAIL_ENABLED || 'false' }}
       SMTP_HOST: ${{ secrets.SMTP_HOST }}
       SMTP_PORT: ${{ secrets.SMTP_PORT || vars.SMTP_PORT || '587' }}

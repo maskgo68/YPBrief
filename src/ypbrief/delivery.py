@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import base64
 from datetime import UTC, datetime
 from email.message import EmailMessage
+import hashlib
+import hmac
 import json
 import re
 import smtplib
+import time
 from typing import Any
 
 import requests
@@ -22,6 +26,12 @@ def mask_secret(value: str) -> str:
     return f"{value[:4]}...{value[-4:]}"
 
 
+def mask_webhook_url(value: str) -> str:
+    if not value:
+        return ""
+    return re.sub(r"(?<=/bot/v2/hook/)[^/?#]+", "***", value)
+
+
 class DeliveryService:
     def __init__(self, db: Database, settings: Settings) -> None:
         self.db = db
@@ -36,6 +46,11 @@ class DeliveryService:
             "telegram_chat_id": row["telegram_chat_id"] or "",
             "telegram_parse_mode": row["telegram_parse_mode"] or "Markdown",
             "telegram_send_as_file_if_too_long": bool(row["telegram_send_as_file_if_too_long"]),
+            "feishu_enabled": bool(row["feishu_enabled"]),
+            "feishu_webhook_url_configured": bool(row["feishu_webhook_url"]),
+            "feishu_webhook_url_hint": mask_webhook_url(row["feishu_webhook_url"] or ""),
+            "feishu_secret_configured": bool(row["feishu_secret"]),
+            "feishu_secret_hint": mask_secret(row["feishu_secret"] or ""),
             "email_enabled": bool(row["email_enabled"]),
             "smtp_host": row["smtp_host"] or "",
             "smtp_port": int(row["smtp_port"] or 587),
@@ -61,6 +76,9 @@ class DeliveryService:
             "telegram_chat_id": payload.get("telegram_chat_id", current["telegram_chat_id"]) or "",
             "telegram_parse_mode": payload.get("telegram_parse_mode", current["telegram_parse_mode"]) or "Markdown",
             "telegram_send_as_file_if_too_long": int(payload.get("telegram_send_as_file_if_too_long", current["telegram_send_as_file_if_too_long"])),
+            "feishu_enabled": int(payload.get("feishu_enabled", current["feishu_enabled"])),
+            "feishu_webhook_url": current["feishu_webhook_url"] if payload.get("feishu_webhook_url") is None else payload.get("feishu_webhook_url", "").strip(),
+            "feishu_secret": current["feishu_secret"] if payload.get("feishu_secret") is None else payload.get("feishu_secret", "").strip(),
             "email_enabled": int(payload.get("email_enabled", current["email_enabled"])),
             "smtp_host": payload.get("smtp_host", current["smtp_host"]) or "",
             "smtp_port": int(payload.get("smtp_port", current["smtp_port"]) or 587),
@@ -78,18 +96,22 @@ class DeliveryService:
                 """
                 INSERT INTO DeliverySettings(
                     settings_id, telegram_enabled, telegram_bot_token, telegram_chat_id,
-                    telegram_parse_mode, telegram_send_as_file_if_too_long, email_enabled,
+                    telegram_parse_mode, telegram_send_as_file_if_too_long, feishu_enabled,
+                    feishu_webhook_url, feishu_secret, email_enabled,
                     smtp_host, smtp_port, smtp_username, smtp_password, smtp_use_tls,
                     smtp_use_ssl, email_from, email_to_json, email_subject_template,
                     email_attach_markdown, updated_at
                 )
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(settings_id) DO UPDATE SET
                     telegram_enabled=excluded.telegram_enabled,
                     telegram_bot_token=excluded.telegram_bot_token,
                     telegram_chat_id=excluded.telegram_chat_id,
                     telegram_parse_mode=excluded.telegram_parse_mode,
                     telegram_send_as_file_if_too_long=excluded.telegram_send_as_file_if_too_long,
+                    feishu_enabled=excluded.feishu_enabled,
+                    feishu_webhook_url=excluded.feishu_webhook_url,
+                    feishu_secret=excluded.feishu_secret,
                     email_enabled=excluded.email_enabled,
                     smtp_host=excluded.smtp_host,
                     smtp_port=excluded.smtp_port,
@@ -114,9 +136,10 @@ class DeliveryService:
         run_id: int | None = None,
         *,
         telegram_enabled: bool | None = None,
+        feishu_enabled: bool | None = None,
         email_enabled: bool | None = None,
     ) -> list[dict[str, Any]]:
-        if not self.any_enabled(telegram_enabled=telegram_enabled, email_enabled=email_enabled):
+        if not self.any_enabled(telegram_enabled=telegram_enabled, feishu_enabled=feishu_enabled, email_enabled=email_enabled):
             return []
         summary = self.db.get_summary(summary_id)
         run_date = summary.get("range_start") or ""
@@ -130,6 +153,7 @@ class DeliveryService:
             summary_id=summary_id,
             run_id=run_id,
             telegram_enabled=telegram_enabled,
+            feishu_enabled=feishu_enabled,
             email_enabled=email_enabled,
         )
 
@@ -140,6 +164,7 @@ class DeliveryService:
         run_id: int | None = None,
         *,
         telegram_enabled: bool | None = None,
+        feishu_enabled: bool | None = None,
         email_enabled: bool | None = None,
     ) -> list[dict[str, Any]]:
         if language == "en":
@@ -153,6 +178,30 @@ class DeliveryService:
             summary_id=None,
             run_id=run_id,
             telegram_enabled=telegram_enabled,
+            feishu_enabled=feishu_enabled,
+            email_enabled=email_enabled,
+        )
+
+    def send_failure_notice(
+        self,
+        run_id: int,
+        run_date: str,
+        language: str,
+        *,
+        telegram_enabled: bool | None = None,
+        feishu_enabled: bool | None = None,
+        email_enabled: bool | None = None,
+    ) -> list[dict[str, Any]]:
+        if not self.any_enabled(telegram_enabled=telegram_enabled, feishu_enabled=feishu_enabled, email_enabled=email_enabled):
+            return []
+        text = self._failure_notice_text(run_id, run_date, language)
+        return self.send_text(
+            text,
+            run_date=run_date,
+            summary_id=None,
+            run_id=run_id,
+            telegram_enabled=telegram_enabled,
+            feishu_enabled=feishu_enabled,
             email_enabled=email_enabled,
         )
 
@@ -164,19 +213,26 @@ class DeliveryService:
         run_id: int | None = None,
         *,
         telegram_enabled: bool | None = None,
+        feishu_enabled: bool | None = None,
         email_enabled: bool | None = None,
     ) -> list[dict[str, Any]]:
         settings = self._row(private=True)
         results: list[dict[str, Any]] = []
         if settings["telegram_enabled"] and (telegram_enabled is not False):
             results.append(self._send_telegram(settings, text, summary_id, run_id))
+        if settings["feishu_enabled"] and (feishu_enabled is not False):
+            results.append(self._send_feishu(settings, text, summary_id, run_id))
         if settings["email_enabled"] and (email_enabled is not False):
             results.append(self._send_email(settings, text, run_date, summary_id, run_id))
         return results
 
-    def any_enabled(self, *, telegram_enabled: bool | None = None, email_enabled: bool | None = None) -> bool:
+    def any_enabled(self, *, telegram_enabled: bool | None = None, feishu_enabled: bool | None = None, email_enabled: bool | None = None) -> bool:
         settings = self._row(private=True)
-        return bool((settings["telegram_enabled"] and telegram_enabled is not False) or (settings["email_enabled"] and email_enabled is not False))
+        return bool(
+            (settings["telegram_enabled"] and telegram_enabled is not False)
+            or (settings["feishu_enabled"] and feishu_enabled is not False)
+            or (settings["email_enabled"] and email_enabled is not False)
+        )
 
     def list_logs(self, limit: int = 50, job_id: int | None = None) -> list[dict[str, Any]]:
         with self.db.connect() as conn:
@@ -263,6 +319,85 @@ class DeliveryService:
             row = conn.execute("SELECT video_title FROM Videos WHERE video_id = ?", (video_id,)).fetchone()
         return row["video_title"] if row is not None else None
 
+    def _failure_notice_text(self, run_id: int, run_date: str, language: str) -> str:
+        run = self._run_context(run_id)
+        title = self._delivery_title_for_run(run_id, run_date)
+        rows = self._failed_run_videos(run_id)
+        if language == "en":
+            lines = [
+                f"# {title} Failed",
+                "",
+                f"Status: {run.get('status') or 'failed'}",
+                f"Failed videos: {run.get('failed_count') or len(rows)}",
+            ]
+            if run.get("error_message"):
+                lines.append(f"Run reason: {_short_error(run['error_message'])}")
+            for index, row in enumerate(rows[:3], start=1):
+                lines.extend(
+                    [
+                        "",
+                        f"## Failed Video {index}",
+                        f"Channel: {_one_line(row.get('channel_name') or '-')}",
+                        f"Source: {_one_line(row.get('source_name') or '-')}",
+                        f"Video: {_one_line(row.get('video_title') or row.get('video_id') or '-')}",
+                        f"Published: {_one_line(row.get('video_date') or '-')}",
+                        f"Link: {_one_line(row.get('video_url') or _youtube_watch_url(row.get('video_id')))}",
+                        f"Reason: {_short_error(row.get('error_message') or run.get('error_message') or '-')}",
+                    ]
+                )
+            if len(rows) > 3:
+                lines.extend(["", f"...and {len(rows) - 3} more failed videos."])
+            return "\n".join(lines)
+
+        lines = [
+            f"# {title} 运行失败",
+            "",
+            f"状态：{run.get('status') or 'failed'}",
+            f"失败视频数：{run.get('failed_count') or len(rows)}",
+        ]
+        if run.get("error_message"):
+            lines.append(f"任务原因：{_short_error(run['error_message'])}")
+        for index, row in enumerate(rows[:3], start=1):
+            lines.extend(
+                [
+                    "",
+                    f"## 失败视频 {index}",
+                    f"频道：{_one_line(row.get('channel_name') or '-')}",
+                    f"来源：{_one_line(row.get('source_name') or '-')}",
+                    f"视频：{_one_line(row.get('video_title') or row.get('video_id') or '-')}",
+                    f"发布时间：{_one_line(row.get('video_date') or '-')}",
+                    f"链接：{_one_line(row.get('video_url') or _youtube_watch_url(row.get('video_id')))}",
+                    f"原因：{_short_error(row.get('error_message') or run.get('error_message') or '-')}",
+                ]
+            )
+        if len(rows) > 3:
+            lines.extend(["", f"另有 {len(rows) - 3} 个失败视频，请到任务记录查看。"])
+        return "\n".join(lines)
+
+    def _failed_run_videos(self, run_id: int) -> list[dict[str, Any]]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    drv.video_id,
+                    drv.error_message,
+                    COALESCE(NULLIF(drv.display_name_snapshot, ''), NULLIF(drv.source_name_snapshot, ''), NULLIF(s.display_name, ''), s.source_name) AS source_name,
+                    COALESCE(s.channel_name, c.channel_name, v.channel_id) AS channel_name,
+                    v.video_title,
+                    v.video_url,
+                    v.video_date
+                FROM DailyRunVideos drv
+                LEFT JOIN Videos v ON v.video_id = drv.video_id
+                LEFT JOIN Sources s ON s.source_id = drv.source_id
+                LEFT JOIN Channels c ON c.channel_id = v.channel_id
+                WHERE drv.run_id = ?
+                  AND drv.status = 'failed'
+                ORDER BY drv.video_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def _send_telegram(self, settings: dict[str, Any], text: str, summary_id: int | None, run_id: int | None) -> dict[str, Any]:
         token = settings["telegram_bot_token"] or ""
         chat_id = settings["telegram_chat_id"] or ""
@@ -289,6 +424,23 @@ class DeliveryService:
             if response is not None and getattr(response, "text", ""):
                 detail = f"{detail}: {response.text}"
             return self._log(summary_id, run_id, "telegram", "failed", chat_id, detail)
+
+    def _send_feishu(self, settings: dict[str, Any], text: str, summary_id: int | None, run_id: int | None) -> dict[str, Any]:
+        webhook_url = settings["feishu_webhook_url"] or ""
+        if not webhook_url:
+            return self._log(summary_id, run_id, "feishu", "failed", "", "Feishu webhook URL missing")
+        try:
+            messages = _feishu_message_parts(text)
+            for message in messages:
+                _post_feishu_message(webhook_url, message, settings["feishu_secret"] or "")
+            detail = None if len(messages) == 1 else f"Sent {len(messages)} Feishu message parts"
+            return self._log(summary_id, run_id, "feishu", "success", mask_webhook_url(webhook_url), detail)
+        except Exception as exc:
+            detail = str(exc)
+            response = getattr(exc, "response", None)
+            if response is not None and getattr(response, "text", ""):
+                detail = f"{detail}: {response.text}"
+            return self._log(summary_id, run_id, "feishu", "failed", mask_webhook_url(webhook_url), detail)
 
     def _send_email(self, settings: dict[str, Any], text: str, run_date: str, summary_id: int | None, run_id: int | None) -> dict[str, Any]:
         recipients = json.loads(settings["email_to_json"] or "[]")
@@ -341,6 +493,7 @@ class DeliveryService:
     def _public_log(self, row: dict[str, Any]) -> dict[str, Any]:
         if row.get("error_message"):
             row["error_message"] = _mask_telegram_token(row["error_message"])
+            row["error_message"] = _mask_feishu_webhook(row["error_message"])
         return row
 
     def _row(self, private: bool = False):
@@ -352,11 +505,12 @@ class DeliveryService:
                     INSERT INTO DeliverySettings(
                         settings_id, telegram_enabled, telegram_bot_token, telegram_chat_id,
                         telegram_parse_mode, telegram_send_as_file_if_too_long,
+                        feishu_enabled, feishu_webhook_url, feishu_secret,
                         email_enabled, smtp_host, smtp_port, smtp_username, smtp_password,
                         smtp_use_tls, smtp_use_ssl, email_from, email_to_json,
                         email_subject_template, email_attach_markdown
                     )
-                    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         int(as_bool(self.settings.telegram_enabled)),
@@ -364,6 +518,9 @@ class DeliveryService:
                         self.settings.telegram_chat_id,
                         self.settings.telegram_parse_mode,
                         int(as_bool(self.settings.telegram_send_as_file_if_too_long)),
+                        int(as_bool(self.settings.feishu_enabled)),
+                        self.settings.feishu_webhook_url,
+                        self.settings.feishu_secret,
                         int(as_bool(self.settings.email_enabled)),
                         self.settings.smtp_host,
                         int(self.settings.smtp_port or 587),
@@ -386,6 +543,9 @@ class DeliveryService:
         self.settings.telegram_chat_id = values["telegram_chat_id"]
         self.settings.telegram_parse_mode = values["telegram_parse_mode"]
         self.settings.telegram_send_as_file_if_too_long = "true" if values["telegram_send_as_file_if_too_long"] else "false"
+        self.settings.feishu_enabled = "true" if values["feishu_enabled"] else "false"
+        self.settings.feishu_webhook_url = values["feishu_webhook_url"]
+        self.settings.feishu_secret = values["feishu_secret"]
         self.settings.email_enabled = "true" if values["email_enabled"] else "false"
         self.settings.smtp_host = values["smtp_host"]
         self.settings.smtp_port = str(values["smtp_port"])
@@ -442,8 +602,58 @@ def _mask_telegram_token(value: str) -> str:
     return re.sub(r"/bot[^/]+/sendMessage", "/bot***:***/sendMessage", value)
 
 
+def _mask_feishu_webhook(value: str) -> str:
+    return re.sub(r"(?<=/bot/v2/hook/)[^/?#\s]+", "***", value)
+
+
+def _post_feishu_message(webhook_url: str, text: str, secret: str | None = None) -> None:
+    payload: dict[str, Any] = {"msg_type": "text", "content": {"text": text}}
+    if secret:
+        timestamp = str(int(time.time()))
+        sign_source = f"{timestamp}\n{secret}".encode("utf-8")
+        payload["timestamp"] = timestamp
+        payload["sign"] = base64.b64encode(hmac.new(sign_source, b"", digestmod=hashlib.sha256).digest()).decode("utf-8")
+    response = requests.post(webhook_url, json=payload, timeout=20)
+    response.raise_for_status()
+    try:
+        data = response.json()
+    except Exception:
+        return
+    code = data.get("code", data.get("StatusCode", 0))
+    if code not in (0, "0"):
+        raise RuntimeError(data.get("msg") or data.get("StatusMessage") or json.dumps(data, ensure_ascii=False))
+
+
+def _feishu_message_parts(text: str, limit: int = 3900) -> list[str]:
+    chunks = _split_text_for_telegram(text, limit=limit - 16)
+    if len(chunks) <= 1:
+        return chunks
+    total = len(chunks)
+    return [f"[{index}/{total}]\n{chunk}" for index, chunk in enumerate(chunks, start=1)]
+
+
 def _one_line(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _short_error(value: Any, limit: int = 220) -> str:
+    text = _one_line(value)
+    if not text:
+        return "-"
+    transcript_match = re.search(r"Could not fetch transcript for ([\w-]+)", text)
+    subtitle_match = re.search(r"yt-dlp could not fetch subtitles for ([\w-]+)", text)
+    if transcript_match and subtitle_match:
+        return f"Could not fetch transcript: yt-dlp could not fetch subtitles for {subtitle_match.group(1)}"
+    if transcript_match:
+        return f"Could not fetch transcript for {transcript_match.group(1)}"
+    text = re.sub(r"^Could not fetch transcript for [\w-]+:\s*", "Could not fetch transcript: ", text)
+    text = text.split("; ", 1)[0]
+    return f"{text[: limit - 3]}..." if len(text) > limit else text
+
+
+def _youtube_watch_url(video_id: Any) -> str:
+    video = _one_line(video_id)
+    return f"https://www.youtube.com/watch?v={video}" if video else "-"
 
 
 def _replace_first_h1(markdown: str, title: str) -> str:

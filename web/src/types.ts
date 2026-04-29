@@ -187,6 +187,7 @@ export type ScheduledJob = {
   retry_failed_once: boolean
   send_empty_digest: boolean
   telegram_enabled: boolean
+  feishu_enabled: boolean
   email_enabled: boolean
   recent_runs?: DigestRun[]
   created_at?: string | null
@@ -200,6 +201,11 @@ export type DeliverySettings = {
   telegram_chat_id: string
   telegram_parse_mode: string
   telegram_send_as_file_if_too_long: boolean
+  feishu_enabled: boolean
+  feishu_webhook_url_configured: boolean
+  feishu_webhook_url_hint?: string
+  feishu_secret_configured: boolean
+  feishu_secret_hint?: string
   email_enabled: boolean
   smtp_host: string
   smtp_port: number

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 
+def normalize_provider(provider: str) -> str:
+    return (provider or "").strip().lower().replace("-", "_").replace("/", "_").replace(" ", "_")
+
+
 BUILTIN_PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
     "openai": {
         "provider": "openai",
@@ -37,10 +41,10 @@ BUILTIN_PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
         "base_url": "https://openrouter.ai/api/v1",
         "default_model": "",
     },
-    "grok": {
-        "provider": "grok",
+    "xai": {
+        "provider": "xai",
         "provider_type": "openai_compatible",
-        "display_name": "Grok / xAI",
+        "display_name": "xAI",
         "base_url": "https://api.x.ai/v1",
         "default_model": "",
     },

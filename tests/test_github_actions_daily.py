@@ -129,6 +129,9 @@ def test_sync_delivery_settings_from_env_enables_delivery(tmp_path: Path) -> Non
                 "TELEGRAM_ENABLED=true",
                 "TELEGRAM_BOT_TOKEN=123456:secret",
                 "TELEGRAM_CHAT_ID=1234567890",
+                "FEISHU_ENABLED=true",
+                "FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/test-token",
+                "FEISHU_SECRET=sign-secret",
                 "EMAIL_ENABLED=true",
                 "SMTP_HOST=smtp.example.test",
                 "SMTP_PORT=587",
@@ -149,6 +152,9 @@ def test_sync_delivery_settings_from_env_enables_delivery(tmp_path: Path) -> Non
 
     assert delivery["telegram_enabled"] is True
     assert delivery["telegram_bot_token_configured"] is True
+    assert delivery["feishu_enabled"] is True
+    assert delivery["feishu_webhook_url_configured"] is True
+    assert delivery["feishu_secret_configured"] is True
     assert delivery["email_enabled"] is True
     assert delivery["email_to"] == ["to@example.test", "team@example.test"]
 
@@ -254,3 +260,15 @@ def test_delivery_result_lines_mask_target_and_include_failure_detail() -> None:
         "delivery telegram failed target=***6789 error=Bad Request: chat not found",
         "delivery email success target=***test",
     ]
+
+
+def test_delivery_notice_classification_prioritizes_failures_over_no_updates() -> None:
+    assert actions_daily.is_failed_without_summary(
+        {"summary_id": None, "status": "failed", "included_count": 0, "failed_count": 1, "skipped_count": 0}
+    )
+    assert not actions_daily.is_no_updates(
+        {"summary_id": None, "status": "failed", "included_count": 0, "failed_count": 1, "skipped_count": 0}
+    )
+    assert actions_daily.is_no_updates(
+        {"summary_id": None, "status": "failed", "included_count": 0, "failed_count": 0, "skipped_count": 0}
+    )

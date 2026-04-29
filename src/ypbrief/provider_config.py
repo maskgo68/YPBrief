@@ -6,7 +6,7 @@ from typing import Any
 from .config import Settings
 from .database import Database
 from .llm import ClaudeProvider, ConfigError, GeminiProvider, OpenAICompatibleProvider, SummaryProvider, create_provider
-from .provider_defaults import BUILTIN_PROVIDER_DEFAULTS
+from .provider_defaults import BUILTIN_PROVIDER_DEFAULTS, normalize_provider as _normalize_provider_name
 
 
 PROVIDER_ENV_KEYS: dict[str, dict[str, str]] = {
@@ -15,7 +15,7 @@ PROVIDER_ENV_KEYS: dict[str, dict[str, str]] = {
     "claude": {"api_key": "ANTHROPIC_API_KEY", "base_url": "ANTHROPIC_BASE_URL", "default_model": "CLAUDE_MODEL"},
     "siliconflow": {"api_key": "SILICONFLOW_API_KEY", "base_url": "SILICONFLOW_BASE_URL", "default_model": "SILICONFLOW_MODEL"},
     "openrouter": {"api_key": "OPENROUTER_API_KEY", "base_url": "OPENROUTER_BASE_URL", "default_model": "OPENROUTER_MODEL"},
-    "grok": {"api_key": "XAI_API_KEY", "base_url": "XAI_BASE_URL", "default_model": "XAI_MODEL"},
+    "xai": {"api_key": "XAI_API_KEY", "base_url": "XAI_BASE_URL", "default_model": "XAI_MODEL"},
     "deepseek": {"api_key": "DEEPSEEK_API_KEY", "base_url": "DEEPSEEK_BASE_URL", "default_model": "DEEPSEEK_MODEL"},
     "custom_openai": {
         "api_key": "CUSTOM_OPENAI_API_KEY",
@@ -31,7 +31,7 @@ PROVIDER_SETTINGS_FIELDS: dict[str, tuple[str, str, str]] = {
     "claude": ("anthropic_api_key", "anthropic_base_url", "claude_model"),
     "siliconflow": ("siliconflow_api_key", "siliconflow_base_url", "siliconflow_model"),
     "openrouter": ("openrouter_api_key", "openrouter_base_url", "openrouter_model"),
-    "grok": ("xai_api_key", "xai_base_url", "xai_model"),
+    "xai": ("xai_api_key", "xai_base_url", "xai_model"),
     "deepseek": ("deepseek_api_key", "deepseek_base_url", "deepseek_model"),
     "custom_openai": ("custom_openai_api_key", "custom_openai_base_url", "custom_openai_model"),
 }
@@ -81,8 +81,9 @@ def get_effective_provider_config(db: Database, settings: Settings, provider: st
 
 
 def get_provider_config_row(db: Database, provider: str) -> dict[str, Any] | None:
+    provider = normalize_provider(provider)
     with db.connect() as conn:
-        row = conn.execute("SELECT * FROM LLMProviderConfigs WHERE provider = ?", (normalize_provider(provider),)).fetchone()
+        row = conn.execute("SELECT * FROM LLMProviderConfigs WHERE provider = ?", (provider,)).fetchone()
     return dict(row) if row else None
 
 
@@ -94,7 +95,7 @@ def env_provider_config(settings: Settings, provider: str) -> dict[str, Any] | N
         "claude": settings.anthropic_api_key,
         "siliconflow": settings.siliconflow_api_key,
         "openrouter": settings.openrouter_api_key,
-        "grok": settings.xai_api_key,
+        "xai": settings.xai_api_key,
         "deepseek": settings.deepseek_api_key,
         "custom_openai": settings.custom_openai_api_key,
     }
@@ -119,7 +120,7 @@ def env_provider_config(settings: Settings, provider: str) -> dict[str, Any] | N
         "claude": (settings.anthropic_base_url, settings.claude_model),
         "siliconflow": (settings.siliconflow_base_url, settings.siliconflow_model),
         "openrouter": (settings.openrouter_base_url, settings.openrouter_model),
-        "grok": (settings.xai_base_url, settings.xai_model),
+        "xai": (settings.xai_base_url, settings.xai_model),
         "deepseek": (settings.deepseek_base_url, settings.deepseek_model),
     }
     if provider == "custom_openai":
@@ -178,4 +179,4 @@ def provider_from_config(config: dict[str, Any], model_name: str) -> SummaryProv
 
 
 def normalize_provider(provider: str) -> str:
-    return (provider or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return _normalize_provider_name(provider)

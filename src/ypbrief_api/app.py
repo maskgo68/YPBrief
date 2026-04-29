@@ -211,6 +211,7 @@ class ScheduledJobCreate(BaseModel):
     retry_failed_once: bool = True
     send_empty_digest: bool = True
     telegram_enabled: bool = True
+    feishu_enabled: bool = False
     email_enabled: bool = False
 
 
@@ -229,6 +230,7 @@ class ScheduledJobUpdate(BaseModel):
     retry_failed_once: bool | None = None
     send_empty_digest: bool | None = None
     telegram_enabled: bool | None = None
+    feishu_enabled: bool | None = None
     email_enabled: bool | None = None
 
 
@@ -238,6 +240,9 @@ class DeliverySettingsUpdate(BaseModel):
     telegram_chat_id: str | None = None
     telegram_parse_mode: str | None = None
     telegram_send_as_file_if_too_long: bool | None = None
+    feishu_enabled: bool | None = None
+    feishu_webhook_url: str | None = None
+    feishu_secret: str | None = None
     email_enabled: bool | None = None
     smtp_host: str | None = None
     smtp_port: int | None = None
@@ -253,6 +258,7 @@ class DeliverySettingsUpdate(BaseModel):
 
 class DeliveryRequest(BaseModel):
     telegram_enabled: bool | None = None
+    feishu_enabled: bool | None = None
     email_enabled: bool | None = None
 
 
@@ -624,6 +630,8 @@ def create_app(
                 "SELECT * FROM ModelProfiles ORDER BY provider, model_name"
             ).fetchall()
         models = [dict(row) for row in rows]
+        for row in models:
+            row["provider"] = _normalize_provider(row["provider"])
         has_active_database_model = any(row.get("is_active") for row in models)
         for row in models:
             row.pop("display_name", None)
@@ -851,6 +859,13 @@ def create_app(
         email = next((item for item in result if item["channel"] == "email"), None)
         return email or {"status": "skipped", "error_message": "Email disabled"}
 
+    @app.post("/api/delivery/test-feishu")
+    def test_feishu_delivery() -> dict[str, Any]:
+        service = DeliveryService(db, settings)
+        result = service.send_text("YPBrief Feishu test", run_date=date.today().isoformat())
+        feishu = next((item for item in result if item["channel"] == "feishu"), None)
+        return feishu or {"status": "skipped", "error_message": "Feishu disabled"}
+
     @app.post("/api/summaries/{summary_id}/deliver")
     def deliver_summary(summary_id: int, payload: DeliveryRequest | None = None) -> dict[str, Any]:
         try:
@@ -859,6 +874,7 @@ def create_app(
                 "deliveries": DeliveryService(db, settings).send_summary(
                     summary_id,
                     telegram_enabled=request.telegram_enabled,
+                    feishu_enabled=request.feishu_enabled,
                     email_enabled=request.email_enabled,
                 )
             }
@@ -875,6 +891,7 @@ def create_app(
 
     @app.post("/api/model-profiles")
     def create_model_profile(payload: ModelProfileCreate) -> dict[str, Any]:
+        provider = _normalize_provider(payload.provider)
         with db.connect() as conn:
             if payload.activate:
                 conn.execute("UPDATE ModelProfiles SET is_active = 0, updated_at = CURRENT_TIMESTAMP")
@@ -889,7 +906,7 @@ def create_app(
                 RETURNING model_id
                 """,
                 (
-                    payload.provider,
+                    provider,
                     payload.model_name,
                     payload.model_name,
                     1 if payload.activate else 0,
@@ -897,7 +914,7 @@ def create_app(
             )
             model_id = int(cursor.fetchone()["model_id"])
         if payload.activate:
-            _sync_active_model_to_env(env_path, settings, payload.provider, payload.model_name)
+            _sync_active_model_to_env(env_path, settings, provider, payload.model_name)
         return _get_model_profile(db, model_id)
 
     @app.post("/api/model-profiles/{model_id}/activate")
@@ -1421,6 +1438,7 @@ def _get_model_profile(db: Database, model_id: int) -> dict[str, Any]:
     if row is None:
         raise HTTPException(status_code=404, detail="Model profile not found")
     result = dict(row)
+    result["provider"] = _normalize_provider(result["provider"])
     result.pop("display_name", None)
     return result
 
@@ -1528,6 +1546,7 @@ def _delivery_env_updates(settings_data: dict[str, Any], payload: dict[str, Any]
         "TELEGRAM_CHAT_ID": settings_data["telegram_chat_id"],
         "TELEGRAM_PARSE_MODE": settings_data["telegram_parse_mode"],
         "TELEGRAM_SEND_AS_FILE_IF_TOO_LONG": "true" if settings_data["telegram_send_as_file_if_too_long"] else "false",
+        "FEISHU_ENABLED": "true" if settings_data["feishu_enabled"] else "false",
         "EMAIL_ENABLED": "true" if settings_data["email_enabled"] else "false",
         "SMTP_HOST": settings_data["smtp_host"],
         "SMTP_PORT": str(settings_data["smtp_port"]),
@@ -1541,6 +1560,10 @@ def _delivery_env_updates(settings_data: dict[str, Any], payload: dict[str, Any]
     }
     if "telegram_bot_token" in payload:
         updates["TELEGRAM_BOT_TOKEN"] = payload.get("telegram_bot_token") or ""
+    if "feishu_webhook_url" in payload:
+        updates["FEISHU_WEBHOOK_URL"] = payload.get("feishu_webhook_url") or ""
+    if "feishu_secret" in payload:
+        updates["FEISHU_SECRET"] = payload.get("feishu_secret") or ""
     if "smtp_password" in payload:
         updates["SMTP_PASSWORD"] = payload.get("smtp_password") or ""
     return updates
@@ -1593,10 +1616,15 @@ def _configure_background_scheduler(app: FastAPI, db: Database, settings: Settin
 
 
 def _public_provider(config: dict[str, Any]) -> dict[str, Any]:
-    return {
+    provider = _normalize_provider(str(config.get("provider") or ""))
+    public = {
         **{key: value for key, value in config.items() if key != "api_key"},
+        "provider": provider,
         "api_key_configured": bool(config.get("api_key")),
     }
+    if provider == "xai":
+        public["display_name"] = "xAI"
+    return public
 
 
 def _get_llm_provider_public(db: Database, settings: Settings, provider: str) -> dict[str, Any]:
@@ -1661,7 +1689,7 @@ def _list_llm_providers(db: Database, settings: Settings) -> list[dict[str, Any]
         data = dict(row)
         effective = _get_llm_provider_effective(db, settings, data["provider"])
         if effective:
-            providers[data["provider"]] = effective
+            providers[effective["provider"]] = effective
     return [_public_provider(providers[key]) for key in sorted(providers)]
 
 
@@ -1689,7 +1717,7 @@ def _llm_configured(db: Database, settings: Settings, provider_name: str | None 
         return bool(settings.siliconflow_api_key)
     if provider == "openrouter":
         return bool(settings.openrouter_api_key)
-    if provider == "grok":
+    if provider == "xai":
         return bool(settings.xai_api_key)
     if provider == "deepseek":
         return bool(settings.deepseek_api_key)

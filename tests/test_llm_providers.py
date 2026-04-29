@@ -73,9 +73,9 @@ def test_create_provider_uses_env_specific_openai_base_url_and_model() -> None:
     assert provider.model == "gpt-4.1-custom"
 
 
-def test_create_provider_uses_env_specific_grok_base_url_and_model() -> None:
+def test_create_provider_uses_env_specific_xai_base_url_and_model() -> None:
     settings = Settings(
-        llm_provider="grok",
+        llm_provider="xai",
         xai_api_key="xai-key",
         xai_base_url="https://api.x.ai/v1",
         xai_model="grok-4.1",
@@ -84,6 +84,6 @@ def test_create_provider_uses_env_specific_grok_base_url_and_model() -> None:
     provider = create_provider(settings)
 
     assert isinstance(provider, OpenAICompatibleProvider)
-    assert provider.name == "grok"
+    assert provider.name == "xai"
     assert provider.base_url == "https://api.x.ai/v1"
     assert provider.model == "grok-4.1"

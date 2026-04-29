@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .config import Settings
-from .provider_defaults import BUILTIN_PROVIDER_DEFAULTS
+from .provider_defaults import BUILTIN_PROVIDER_DEFAULTS, normalize_provider
 
 
 class ConfigError(ValueError):
@@ -87,7 +87,7 @@ class ClaudeProvider:
 
 
 def create_provider(settings: Settings) -> SummaryProvider:
-    provider = settings.llm_provider.lower()
+    provider = normalize_provider(settings.llm_provider)
     if provider == "openai":
         return _openai_compatible(
             name="openai",
@@ -112,12 +112,12 @@ def create_provider(settings: Settings) -> SummaryProvider:
             base_url=settings.openrouter_base_url or _default_base_url("openrouter"),
             model=settings.openrouter_model or settings.llm_model,
         )
-    if provider == "grok":
+    if provider == "xai":
         return _openai_compatible(
-            name="grok",
+            name="xai",
             api_key=settings.xai_api_key,
             env_name="XAI_API_KEY",
-            base_url=settings.xai_base_url or _default_base_url("grok"),
+            base_url=settings.xai_base_url or _default_base_url("xai"),
             model=settings.xai_model or settings.llm_model,
         )
     if provider == "deepseek":
@@ -172,7 +172,7 @@ def _openai_compatible(
 
 
 def _default_base_url(provider: str) -> str:
-    return BUILTIN_PROVIDER_DEFAULTS[provider]["base_url"]
+    return BUILTIN_PROVIDER_DEFAULTS[normalize_provider(provider)]["base_url"]
 
 
 def _required_model(provider: str, model: str) -> str:

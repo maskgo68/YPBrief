@@ -111,6 +111,7 @@ const copy = {
     processingVideo: '处理中...',
     deliverAfterSummary: '完成后推送',
     pushTelegram: 'Telegram',
+    pushFeishu: '飞书',
     pushEmail: 'Email',
     deliver: '推送',
     delivering: '推送中...',
@@ -153,6 +154,7 @@ const copy = {
     runSubmitted: '任务已提交，正在后台运行；完成后会出现在运行记录中。',
     deliverySettings: '消息渠道',
     telegramDelivery: 'Telegram 推送',
+    feishuDelivery: '飞书推送',
     emailDelivery: 'Email 推送',
     runNow: '立即运行',
     runTime: '运行时间',
@@ -171,12 +173,15 @@ const copy = {
     processMissingVideos: '自动处理缺失总结',
     retryFailedOnce: '失败重试一次',
     testTelegram: '测试 Telegram',
+    testFeishu: '测试飞书',
     testEmail: '测试 Email',
     deliveryLogs: '推送记录',
     showLogs: '展开记录',
     hideLogs: '收起记录',
     botToken: 'Bot Token',
     chatId: 'Chat ID',
+    webhookUrl: 'Webhook URL',
+    signingSecret: '签名密钥',
     smtpHost: 'SMTP Host',
     smtpPort: 'SMTP Port',
     smtpUsername: 'SMTP 用户名',
@@ -190,6 +195,11 @@ const copy = {
     proxyStatus: '代理状态',
     proxyEffective: '有效代理',
     proxyYtDlp: 'yt-dlp 代理',
+    proxyUrl: '通用代理地址',
+    proxyUrlHint: '通常三项代理可以填同一个地址；不确定时只填这里即可。',
+    proxyAdvanced: '高级代理配置',
+    proxySplitFields: 'host / port / username / password 格式',
+    proxySplitHint: '如果代理服务商给的是拆分字段，可以在这里填写；通用代理地址适合大多数服务商。',
     videoPrompt: '单视频总结提示词',
     dailyPrompt: '每日总结提示词',
     generateDigest: '生成日报',
@@ -346,6 +356,7 @@ const copy = {
     processingVideo: 'Processing...',
     deliverAfterSummary: 'Deliver after summary',
     pushTelegram: 'Telegram',
+    pushFeishu: 'Feishu',
     pushEmail: 'Email',
     deliver: 'Deliver',
     delivering: 'Delivering...',
@@ -388,6 +399,7 @@ const copy = {
     runSubmitted: 'Job submitted and running in the background. The result will appear in run history.',
     deliverySettings: 'Message Channels',
     telegramDelivery: 'Telegram Delivery',
+    feishuDelivery: 'Feishu Delivery',
     emailDelivery: 'Email Delivery',
     runNow: 'Run Now',
     runTime: 'Run time',
@@ -406,12 +418,15 @@ const copy = {
     processMissingVideos: 'Process missing summaries',
     retryFailedOnce: 'Retry failed once',
     testTelegram: 'Test Telegram',
+    testFeishu: 'Test Feishu',
     testEmail: 'Test Email',
     deliveryLogs: 'Delivery Logs',
     showLogs: 'Show logs',
     hideLogs: 'Hide logs',
     botToken: 'Bot Token',
     chatId: 'Chat ID',
+    webhookUrl: 'Webhook URL',
+    signingSecret: 'Signing secret',
     smtpHost: 'SMTP Host',
     smtpPort: 'SMTP Port',
     smtpUsername: 'SMTP username',
@@ -425,6 +440,11 @@ const copy = {
     proxyStatus: 'Proxy status',
     proxyEffective: 'Effective proxy',
     proxyYtDlp: 'yt-dlp proxy',
+    proxyUrl: 'Proxy URL',
+    proxyUrlHint: 'Usually all proxy fields can use the same URL. If unsure, fill this field only.',
+    proxyAdvanced: 'Advanced proxy settings',
+    proxySplitFields: 'host / port / username / password format',
+    proxySplitHint: 'Use this when your proxy provider gives split fields. The generic proxy URL works for most providers.',
     videoPrompt: 'Video Summary Prompt',
     dailyPrompt: 'Daily Digest Prompt',
     generateDigest: 'Generate Digest',
@@ -537,6 +557,7 @@ function downloadMarkdown(filename: string, content: string) {
 
 type DeliveryChannels = {
   telegram: boolean
+  feishu: boolean
   email: boolean
 }
 
@@ -545,6 +566,7 @@ async function deliverSummary(summaryId: number, channels: DeliveryChannels): Pr
     method: 'POST',
     body: JSON.stringify({
       telegram_enabled: channels.telegram,
+      feishu_enabled: channels.feishu,
       email_enabled: channels.email,
     }),
   })
@@ -589,6 +611,10 @@ function groupLabel(group: SourceGroup) {
 
 function sourceGroupLabel(source: Source, fallback: string) {
   return cleanLabel(source.group_display_name) || cleanLabel(source.group_name) || fallback
+}
+
+function providerDisplayName(item: Pick<LLMProvider, 'provider' | 'display_name'>) {
+  return item.provider === 'xai' ? 'xAI' : (item.display_name || item.provider)
 }
 
 type SourceBulkAddResult = {
@@ -958,7 +984,7 @@ function DashboardView({
   const [quickBusy, setQuickBusy] = useState(false)
   const [quickResult, setQuickResult] = useState<QuickVideoProcessResult | null>(null)
   const [quickMessage, setQuickMessage] = useState('')
-  const [quickDelivery, setQuickDelivery] = useState<DeliveryChannels>({ telegram: false, email: false })
+  const [quickDelivery, setQuickDelivery] = useState<DeliveryChannels>({ telegram: false, feishu: false, email: false })
   const [quickLanguage, setQuickLanguage] = useState<'auto' | 'zh' | 'en'>('auto')
   const regenerate = async () => {
     if (!digest) return
@@ -1001,7 +1027,7 @@ function DashboardView({
       })
       setQuickResult(result)
       let nextMessage = result.reused ? t.reusedSummary : t.summarizedNow
-      if (result.summary_id && (quickDelivery.telegram || quickDelivery.email)) {
+      if (result.summary_id && (quickDelivery.telegram || quickDelivery.feishu || quickDelivery.email)) {
         const deliveries = await deliverSummary(result.summary_id, quickDelivery)
         nextMessage = `${nextMessage} · ${deliveryStatusText(deliveries, t)}`
       }
@@ -1594,7 +1620,7 @@ function VideosView({
   const [mode, setMode] = useState<VideoMode>('reading')
   const [listView, setListView] = useState<'list' | 'channel'>('list')
   const [expandedChannels, setExpandedChannels] = useState<string[]>([])
-  const [deliveryChannels, setDeliveryChannels] = useState<DeliveryChannels>({ telegram: true, email: false })
+  const [deliveryChannels, setDeliveryChannels] = useState<DeliveryChannels>({ telegram: true, feishu: false, email: false })
   const [delivering, setDelivering] = useState(false)
   const [appliedSelectedVideoId, setAppliedSelectedVideoId] = useState('')
   const [filters, setFilters] = useState({
@@ -1736,7 +1762,7 @@ function VideosView({
   }
   const deliverCurrentVideo = async () => {
     if (!detail?.summary?.summary_id) return
-    if (!deliveryChannels.telegram && !deliveryChannels.email) {
+    if (!deliveryChannels.telegram && !deliveryChannels.feishu && !deliveryChannels.email) {
       setStatus(t.selectDeliveryChannel)
       return
     }
@@ -1941,7 +1967,7 @@ function DigestsView({
   const [tab, setTab] = useState<DigestTab>('summary')
   const [message, setMessage] = useState('')
   const [retrying, setRetrying] = useState('')
-  const [deliveryChannels, setDeliveryChannels] = useState<DeliveryChannels>({ telegram: true, email: false })
+  const [deliveryChannels, setDeliveryChannels] = useState<DeliveryChannels>({ telegram: true, feishu: false, email: false })
   const [delivering, setDelivering] = useState(false)
 
   useEffect(() => {
@@ -2027,7 +2053,7 @@ function DigestsView({
   }
   const deliverCurrentDigest = async () => {
     if (!visibleDigest?.summary_id) return
-    if (!deliveryChannels.telegram && !deliveryChannels.email) {
+    if (!deliveryChannels.telegram && !deliveryChannels.feishu && !deliveryChannels.email) {
       setMessage(t.selectDeliveryChannel)
       return
     }
@@ -2375,6 +2401,7 @@ function AutomationView({
     retry_failed_once: true,
     send_empty_digest: true,
     telegram_enabled: true,
+    feishu_enabled: false,
     email_enabled: false,
   }
   const [editingId, setEditingId] = useState<number | 'new' | null>(null)
@@ -2452,7 +2479,7 @@ function AutomationView({
         <div className="settings-section-header">
           <div>
             <h2>{t.automationJobs}</h2>
-            <p className="digest-meta">{jobs.length} jobs · Telegram / Email shared credentials</p>
+            <p className="digest-meta">{jobs.length} jobs · Telegram / 飞书 / Email shared credentials</p>
           </div>
           <button onClick={startNew}>{t.addJob}</button>
         </div>
@@ -2467,7 +2494,7 @@ function AutomationView({
             </div>
                 <div className="settings-meta-grid">
                   <span>{t.sourceScope}: {scopeLabel(job.scope_type, t)}</span>
-                  <span>{t.deliveryChannels}: {[job.telegram_enabled ? 'Telegram' : '', job.email_enabled ? 'Email' : ''].filter(Boolean).join(' / ') || '-'}</span>
+                  <span>{t.deliveryChannels}: {[job.telegram_enabled ? 'Telegram' : '', job.feishu_enabled ? '飞书' : '', job.email_enabled ? 'Email' : ''].filter(Boolean).join(' / ') || '-'}</span>
                 </div>
                 <span className={job.enabled ? 'pill ok' : 'pill'}>{job.enabled ? t.enabled : t.disabled}</span>
                 <div className="row-actions">
@@ -2503,7 +2530,7 @@ function AutomationView({
         <div className="settings-section-header">
           <div>
             <h2>{t.deliveryLogs}</h2>
-            <p className="digest-meta">Telegram · Email · latest 5</p>
+            <p className="digest-meta">Telegram · 飞书 · Email · latest 5</p>
           </div>
           <button className="ghost" onClick={() => setShowDeliveryLogs(!showDeliveryLogs)}>{showDeliveryLogs ? t.hideLogs : t.showLogs}</button>
         </div>
@@ -2603,6 +2630,7 @@ function JobForm({
       <label className="check-row"><input type="checkbox" checked={form.retry_failed_once} onChange={(event) => setForm({ ...form, retry_failed_once: event.target.checked })} />{t.retryFailedOnce}</label>
       <label className="check-row"><input type="checkbox" checked={form.send_empty_digest} onChange={(event) => setForm({ ...form, send_empty_digest: event.target.checked })} />{t.sendEmptyDigest}</label>
       <label className="check-row"><input type="checkbox" checked={form.telegram_enabled} onChange={(event) => setForm({ ...form, telegram_enabled: event.target.checked })} />Telegram</label>
+      <label className="check-row"><input type="checkbox" checked={form.feishu_enabled} onChange={(event) => setForm({ ...form, feishu_enabled: event.target.checked })} />飞书</label>
       <label className="check-row"><input type="checkbox" checked={form.email_enabled} onChange={(event) => setForm({ ...form, email_enabled: event.target.checked })} />Email</label>
       <div className="form-actions wide"><button onClick={saveJob}>{t.save}</button><button className="ghost" onClick={cancel}>{t.cancel}</button></div>
     </div>
@@ -2682,6 +2710,7 @@ function SettingsView({
   })
   const [proxyPasswordTouched, setProxyPasswordTouched] = useState(false)
   const [showTelegramForm, setShowTelegramForm] = useState(false)
+  const [showFeishuForm, setShowFeishuForm] = useState(false)
   const [showEmailForm, setShowEmailForm] = useState(false)
   const [telegramForm, setTelegramForm] = useState({
     telegram_enabled: false,
@@ -2691,6 +2720,13 @@ function SettingsView({
     telegram_send_as_file_if_too_long: true,
   })
   const [telegramTokenTouched, setTelegramTokenTouched] = useState(false)
+  const [feishuForm, setFeishuForm] = useState({
+    feishu_enabled: false,
+    feishu_webhook_url: '',
+    feishu_secret: '',
+  })
+  const [feishuWebhookTouched, setFeishuWebhookTouched] = useState(false)
+  const [feishuSecretTouched, setFeishuSecretTouched] = useState(false)
   const [emailForm, setEmailForm] = useState({
     email_enabled: false,
     smtp_host: '',
@@ -2736,6 +2772,11 @@ function SettingsView({
       telegram_parse_mode: deliverySettings.telegram_parse_mode || 'Markdown',
       telegram_send_as_file_if_too_long: deliverySettings.telegram_send_as_file_if_too_long,
     })
+    setFeishuForm({
+      feishu_enabled: deliverySettings.feishu_enabled,
+      feishu_webhook_url: '',
+      feishu_secret: '',
+    })
     setEmailForm({
       email_enabled: deliverySettings.email_enabled,
       smtp_host: deliverySettings.smtp_host || '',
@@ -2750,6 +2791,8 @@ function SettingsView({
       email_attach_markdown: deliverySettings.email_attach_markdown,
     })
     setTelegramTokenTouched(false)
+    setFeishuWebhookTouched(false)
+    setFeishuSecretTouched(false)
     setSmtpPasswordTouched(false)
   }, [deliverySettings])
 
@@ -2776,7 +2819,7 @@ function SettingsView({
     setEditProviderForm({
       provider: item.provider,
       provider_type: item.provider_type,
-      display_name: item.display_name || '',
+      display_name: providerDisplayName(item),
       base_url: item.base_url || '',
       api_key: '',
       default_model: item.default_model || '',
@@ -2818,6 +2861,14 @@ function SettingsView({
     })
     setProxyPasswordTouched(false)
     onChanged()
+  }
+  const updateGenericProxyUrl = (value: string) => {
+    setProxyForm({
+      ...proxyForm,
+      youtube_proxy_http: value,
+      youtube_proxy_https: value,
+      yt_dlp_proxy: value,
+    })
   }
   const saveYoutube = async () => {
     await api('/youtube-settings', {
@@ -2913,6 +2964,20 @@ function SettingsView({
     })
     setTelegramTokenTouched(false)
     setShowTelegramForm(false)
+    onChanged()
+  }
+  const saveFeishu = async () => {
+    await api('/delivery-settings', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        feishu_enabled: feishuForm.feishu_enabled,
+        feishu_webhook_url: feishuWebhookTouched ? feishuForm.feishu_webhook_url : undefined,
+        feishu_secret: feishuSecretTouched ? feishuForm.feishu_secret : undefined,
+      }),
+    })
+    setFeishuWebhookTouched(false)
+    setFeishuSecretTouched(false)
+    setShowFeishuForm(false)
     onChanged()
   }
   const saveEmail = async () => {
@@ -3038,7 +3103,7 @@ function SettingsView({
         <div className="settings-section-header">
           <div>
             <h2>{t.deliverySettings}</h2>
-            <p className="digest-meta">Telegram · Email</p>
+            <p className="digest-meta">Telegram · 飞书 · Email</p>
           </div>
         </div>
         <div className="settings-row">
@@ -3082,6 +3147,43 @@ function SettingsView({
               <div className="form-actions wide">
                 <button onClick={saveTelegram}>{t.save}</button>
                 <button className="ghost" onClick={() => setShowTelegramForm(false)}>{t.cancel}</button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+        <div className="settings-row">
+          <div className="settings-row-summary">
+            <div className="settings-identity">
+              <strong>{t.feishuDelivery}</strong>
+              <span>{deliverySettings?.feishu_webhook_url_hint || '-'}</span>
+            </div>
+            <div className="settings-meta-grid">
+              <span>{t.webhookUrl}: {deliverySettings?.feishu_webhook_url_configured ? t.configured : t.missing}</span>
+              <span>{t.signingSecret}: {deliverySettings?.feishu_secret_hint || '-'}</span>
+            </div>
+            <span className={deliverySettings?.feishu_enabled ? 'pill ok' : 'pill'}>{deliverySettings?.feishu_enabled ? t.enabled : t.disabled}</span>
+            <div className="row-actions">
+              <button className="ghost" onClick={() => setShowFeishuForm(!showFeishuForm)}>{showFeishuForm ? t.cancel : t.edit}</button>
+              <button onClick={() => testDelivery('/delivery/test-feishu')}>{t.testFeishu}</button>
+            </div>
+          </div>
+          {showFeishuForm ? (
+            <div className="settings-form">
+              <label className="check-row wide">
+                <input type="checkbox" checked={feishuForm.feishu_enabled} onChange={(event) => setFeishuForm({ ...feishuForm, feishu_enabled: event.target.checked })} />
+                {t.enabled}
+              </label>
+              <label className="form-field wide">
+                <span>{t.webhookUrl}</span>
+                <input type="password" value={feishuForm.feishu_webhook_url} placeholder={deliverySettings?.feishu_webhook_url_configured ? t.configured : t.missing} onChange={(event) => { setFeishuWebhookTouched(true); setFeishuForm({ ...feishuForm, feishu_webhook_url: event.target.value }) }} />
+              </label>
+              <label className="form-field wide">
+                <span>{t.signingSecret}</span>
+                <input type="password" value={feishuForm.feishu_secret} placeholder={deliverySettings?.feishu_secret_configured ? t.configured : t.missing} onChange={(event) => { setFeishuSecretTouched(true); setFeishuForm({ ...feishuForm, feishu_secret: event.target.value }) }} />
+              </label>
+              <div className="form-actions wide">
+                <button onClick={saveFeishu}>{t.save}</button>
+                <button className="ghost" onClick={() => setShowFeishuForm(false)}>{t.cancel}</button>
               </div>
             </div>
           ) : null}
@@ -3215,7 +3317,6 @@ function SettingsView({
             <span>{t.proxyYtDlp}: <code>{proxySettings?.effective_yt_dlp_proxy || '-'}</code></span>
           </div>
           <span className={proxySettings?.enabled ? 'pill ok' : 'pill'}>{proxySettings?.enabled ? t.enabled : t.disabled}</span>
-          <span className={proxySettings?.iproyal_password_configured ? 'pill ok' : 'pill'}>{proxySettings?.iproyal_password_configured ? t.configured : t.missing}</span>
         </div>
         {showProxyForm ? (
           <div className="settings-form proxy-form">
@@ -3223,42 +3324,56 @@ function SettingsView({
               <input type="checkbox" checked={proxyForm.enabled} onChange={(event) => setProxyForm({ ...proxyForm, enabled: event.target.checked })} />
               {t.proxyEnabled}
             </label>
-            <label className="form-field">
-              <span>IPRoyal Host</span>
-              <input value={proxyForm.iproyal_host} onChange={(event) => setProxyForm({ ...proxyForm, iproyal_host: event.target.value })} placeholder="proxy.example.com" />
-            </label>
-            <label className="form-field">
-              <span>IPRoyal Port</span>
-              <input value={proxyForm.iproyal_port} onChange={(event) => setProxyForm({ ...proxyForm, iproyal_port: event.target.value })} placeholder="12321" />
-            </label>
-            <label className="form-field">
-              <span>IPRoyal Username</span>
-              <input value={proxyForm.iproyal_username} onChange={(event) => setProxyForm({ ...proxyForm, iproyal_username: event.target.value })} placeholder="session token" />
-            </label>
-            <label className="form-field">
-              <span>IPRoyal Password</span>
-              <input
-                type="password"
-                value={proxyForm.iproyal_password}
-                onChange={(event) => {
-                  setProxyPasswordTouched(true)
-                  setProxyForm({ ...proxyForm, iproyal_password: event.target.value })
-                }}
-                placeholder={proxySettings?.iproyal_password_configured ? t.configured : t.missing}
-              />
-            </label>
             <label className="form-field wide">
-              <span>HTTPS Proxy</span>
-              <input value={proxyForm.youtube_proxy_https} onChange={(event) => setProxyForm({ ...proxyForm, youtube_proxy_https: event.target.value })} placeholder="https://proxy.example.test:443" />
+              <span>{t.proxyUrl}</span>
+              <input value={proxyForm.yt_dlp_proxy || proxyForm.youtube_proxy_https || proxyForm.youtube_proxy_http} onChange={(event) => updateGenericProxyUrl(event.target.value)} placeholder="http://user:pass@host:port" />
+              <small>{t.proxyUrlHint}</small>
             </label>
-            <label className="form-field wide">
-              <span>HTTP Proxy</span>
-              <input value={proxyForm.youtube_proxy_http} onChange={(event) => setProxyForm({ ...proxyForm, youtube_proxy_http: event.target.value })} placeholder="http://proxy.example.test:80" />
-            </label>
-            <label className="form-field wide">
-              <span>{t.proxyYtDlp}</span>
-              <input value={proxyForm.yt_dlp_proxy} onChange={(event) => setProxyForm({ ...proxyForm, yt_dlp_proxy: event.target.value })} placeholder="http://user:pass@host:port" />
-            </label>
+            <details className="proxy-advanced wide">
+              <summary>{t.proxyAdvanced}</summary>
+              <div className="proxy-advanced-grid">
+                <label className="form-field wide">
+                  <span>HTTP Proxy</span>
+                  <input value={proxyForm.youtube_proxy_http} onChange={(event) => setProxyForm({ ...proxyForm, youtube_proxy_http: event.target.value })} placeholder="http://user:pass@host:port" />
+                </label>
+                <label className="form-field wide">
+                  <span>HTTPS Proxy</span>
+                  <input value={proxyForm.youtube_proxy_https} onChange={(event) => setProxyForm({ ...proxyForm, youtube_proxy_https: event.target.value })} placeholder="http://user:pass@host:port" />
+                </label>
+                <label className="form-field wide">
+                  <span>{t.proxyYtDlp}</span>
+                  <input value={proxyForm.yt_dlp_proxy} onChange={(event) => setProxyForm({ ...proxyForm, yt_dlp_proxy: event.target.value })} placeholder="http://user:pass@host:port" />
+                </label>
+                <div className="proxy-split-heading wide">
+                  <strong>{t.proxySplitFields}</strong>
+                  <span>{t.proxySplitHint}</span>
+                </div>
+                <label className="form-field">
+                  <span>Host</span>
+                  <input value={proxyForm.iproyal_host} onChange={(event) => setProxyForm({ ...proxyForm, iproyal_host: event.target.value })} placeholder="proxy.example.com" />
+                </label>
+                <label className="form-field">
+                  <span>Port</span>
+                  <input value={proxyForm.iproyal_port} onChange={(event) => setProxyForm({ ...proxyForm, iproyal_port: event.target.value })} placeholder="12321" />
+                </label>
+                <label className="form-field">
+                  <span>Username</span>
+                  <input value={proxyForm.iproyal_username} onChange={(event) => setProxyForm({ ...proxyForm, iproyal_username: event.target.value })} placeholder="session token" />
+                </label>
+                <label className="form-field">
+                  <span>Password</span>
+                  <input
+                    type="password"
+                    value={proxyForm.iproyal_password}
+                    onChange={(event) => {
+                      setProxyPasswordTouched(true)
+                      setProxyForm({ ...proxyForm, iproyal_password: event.target.value })
+                    }}
+                    placeholder={proxySettings?.iproyal_password_configured ? t.configured : t.missing}
+                  />
+                </label>
+              </div>
+            </details>
             <div className="form-actions wide">
               <button onClick={saveProxy}>{t.save}</button>
               <button className="ghost" onClick={() => setShowProxyForm(false)}>{t.cancel}</button>
@@ -3280,7 +3395,7 @@ function SettingsView({
           <div className="settings-form provider-add-form">
             <label className="form-field">
               <span>Provider ID</span>
-              <input value={providerForm.provider} onChange={(event) => setProviderForm({ ...providerForm, provider: event.target.value })} placeholder="deepseek, grok, custom_vendor" />
+              <input value={providerForm.provider} onChange={(event) => setProviderForm({ ...providerForm, provider: event.target.value })} placeholder="deepseek, xai, custom_vendor" />
             </label>
             <label className="form-field">
               <span>{t.providerType}</span>
@@ -3290,7 +3405,7 @@ function SettingsView({
             </label>
             <label className="form-field">
               <span>{t.displayName}</span>
-              <input value={providerForm.display_name} onChange={(event) => setProviderForm({ ...providerForm, display_name: event.target.value })} placeholder="DeepSeek / Grok / internal gateway" />
+              <input value={providerForm.display_name} onChange={(event) => setProviderForm({ ...providerForm, display_name: event.target.value })} placeholder="DeepSeek / xAI / internal gateway" />
             </label>
             <label className="form-field">
               <span>{t.defaultModel}</span>
@@ -3316,7 +3431,7 @@ function SettingsView({
             <div className={editingProvider === item.provider ? 'settings-row expanded' : 'settings-row'} key={item.provider}>
               <div className="settings-row-summary">
                 <div className="settings-identity">
-                  <strong>{item.display_name || item.provider}</strong>
+                  <strong>{providerDisplayName(item)}</strong>
                   <span>{item.provider} · {item.provider_type} · {item.source}</span>
                 </div>
                 <div className="settings-meta-grid">
@@ -3438,7 +3553,7 @@ function SettingsView({
 function ProviderOptions({ providers }: { providers: LLMProvider[] }) {
   return (
     <>
-      {providers.map((item) => <option key={item.provider} value={item.provider}>{item.display_name || item.provider}</option>)}
+      {providers.map((item) => <option key={item.provider} value={item.provider}>{providerDisplayName(item)}</option>)}
     </>
   )
 }
@@ -3464,6 +3579,14 @@ function DeliveryChannelPicker({
           onChange={(event) => onChange({ ...channels, telegram: event.target.checked })}
         />
         {t.pushTelegram}
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={channels.feishu}
+          onChange={(event) => onChange({ ...channels, feishu: event.target.checked })}
+        />
+        {t.pushFeishu}
       </label>
       <label>
         <input

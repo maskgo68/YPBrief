@@ -74,6 +74,44 @@ def test_telegram_delivery_retries_parse_errors_as_plain_text(tmp_path: Path, mo
     assert "parse_mode" not in posted[1]
 
 
+def test_feishu_delivery_posts_signed_text_message(tmp_path: Path, monkeypatch) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    service = DeliveryService(
+        db,
+        Settings(
+            feishu_enabled="true",
+            feishu_webhook_url="https://open.feishu.cn/open-apis/bot/v2/hook/test-token",
+            feishu_secret="sign-secret",
+        ),
+    )
+    posted: list[dict] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return {"code": 0}
+
+    def fake_post(url, json, timeout):
+        posted.append({"url": url, "json": json})
+        return FakeResponse()
+
+    monkeypatch.setattr("ypbrief.delivery.requests.post", fake_post)
+    monkeypatch.setattr("ypbrief.delivery.time.time", lambda: 1760000000)
+
+    result = service.send_text("# Digest\n\nBody", run_date="2026-04-26", telegram_enabled=False, feishu_enabled=True, email_enabled=False)
+
+    assert result[0]["status"] == "success"
+    assert result[0]["channel"] == "feishu"
+    assert posted[0]["url"].endswith("/test-token")
+    assert posted[0]["json"]["msg_type"] == "text"
+    assert posted[0]["json"]["content"]["text"] == "# Digest\n\nBody"
+    assert posted[0]["json"]["timestamp"] == "1760000000"
+    assert posted[0]["json"]["sign"]
+
+
 def test_send_summary_replaces_digest_title_with_scheduled_job_name(tmp_path: Path, monkeypatch) -> None:
     db = Database(tmp_path / "ypbrief.db")
     db.initialize()
@@ -81,7 +119,7 @@ def test_send_summary_replaces_digest_title_with_scheduled_job_name(tmp_path: Pa
     summary_id = db.save_summary(
         summary_type="digest",
         content_markdown="# Daily Podcast Digest - 2026-04-27\n\nBody",
-        provider="grok",
+        provider="xai",
         model="grok-test",
         range_start="2026-04-27",
         range_end="2026-04-27",

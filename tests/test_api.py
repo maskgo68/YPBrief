@@ -1092,7 +1092,7 @@ def test_api_delivery_settings_mask_secrets_and_sync_env(tmp_path: Path) -> None
     db = Database(tmp_path / "ypbrief.db")
     db.initialize()
     env_file = tmp_path / "key.env"
-    env_file.write_text("TELEGRAM_BOT_TOKEN=old-token\nSMTP_PASSWORD=old-pass\n", encoding="utf-8")
+    env_file.write_text("TELEGRAM_BOT_TOKEN=old-token\nFEISHU_WEBHOOK_URL=old-webhook\nFEISHU_SECRET=old-secret\nSMTP_PASSWORD=old-pass\n", encoding="utf-8")
     client = TestClient(create_app(db=db, env_file=env_file))
 
     updated = client.patch(
@@ -1101,6 +1101,9 @@ def test_api_delivery_settings_mask_secrets_and_sync_env(tmp_path: Path) -> None
             "telegram_enabled": True,
             "telegram_bot_token": "123456:telegram-secret",
             "telegram_chat_id": "-10042",
+            "feishu_enabled": True,
+            "feishu_webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/feishu-secret-token",
+            "feishu_secret": "sign-secret",
             "email_enabled": True,
             "smtp_host": "smtp.example.test",
             "smtp_port": 465,
@@ -1117,11 +1120,18 @@ def test_api_delivery_settings_mask_secrets_and_sync_env(tmp_path: Path) -> None
 
     assert updated.status_code == 200
     assert updated.json()["telegram_bot_token_configured"] is True
+    assert updated.json()["feishu_webhook_url_configured"] is True
+    assert updated.json()["feishu_secret_configured"] is True
     assert "telegram_bot_token" not in updated.json()
+    assert "feishu_webhook_url" not in updated.json()
+    assert "feishu_secret" not in updated.json()
     assert fetched.json()["smtp_password_configured"] is True
     assert "smtp_password" not in fetched.json()
     assert fetched.json()["email_to"] == ["ops@example.test", "me@example.test"]
     assert "TELEGRAM_BOT_TOKEN=123456:telegram-secret" in env_text
+    assert "FEISHU_ENABLED=true" in env_text
+    assert "FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/feishu-secret-token" in env_text
+    assert "FEISHU_SECRET=sign-secret" in env_text
     assert "SMTP_PASSWORD=smtp-secret" in env_text
     assert "EMAIL_TO=ops@example.test,me@example.test" in env_text
 
@@ -1390,6 +1400,106 @@ def test_api_scheduled_job_no_updates_delivers_empty_digest_notice(tmp_path: Pat
     assert response.json()["empty_digest_delivered"] is True
     assert logs.json()[0]["channel"] == "telegram"
     assert logs.json()[0]["status"] == "success"
+
+
+def test_api_scheduled_job_failure_delivers_short_failure_notice(tmp_path: Path, monkeypatch) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    source_id = db.upsert_source(
+        source_type="playlist",
+        source_name="Exchanges",
+        youtube_id="PLGS",
+        url="https://www.youtube.com/playlist?list=PLGS",
+        channel_name="Goldman Sachs",
+        enabled=True,
+    )
+    db.upsert_channel("UCGS", "Goldman Sachs", "https://www.youtube.com/@GoldmanSachs")
+    db.upsert_video(
+        "HzyrlYgz748",
+        "UCGS",
+        "How Warsh Could Shape Fed Policy",
+        "https://www.youtube.com/watch?v=HzyrlYgz748",
+        "2026-04-28",
+    )
+
+    class FakeRunner:
+        def run(self, **kwargs):
+            with db.connect() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO DailyRuns(run_type, status, window_start, window_end, source_ids_json, failed_count, error_message)
+                    VALUES ('manual', 'failed', '2026-04-28', '2026-04-29', ?, 1, 'No videos included')
+                    """,
+                    (json.dumps(kwargs["source_ids"]),),
+                )
+                run_id = int(cursor.lastrowid)
+                conn.execute(
+                    """
+                    INSERT INTO DailyRunVideos(
+                        run_id, video_id, source_id, source_name_snapshot,
+                        display_name_snapshot, source_type_snapshot, status, action, error_message
+                    )
+                    VALUES (?, 'HzyrlYgz748', ?, 'Exchanges', '', 'playlist', 'failed', 'process', ?)
+                    """,
+                    (
+                        run_id,
+                        source_id,
+                        "Could not fetch transcript for HzyrlYgz748: yt-dlp=yt-dlp could not fetch subtitles for HzyrlYgz748: en-US=yt-dlp did not download VTT subtitles for HzyrlYgz748; en=yt-dlp did not download VTT subtitles for HzyrlYgz748",
+                    ),
+                )
+            return {
+                "run_id": run_id,
+                "status": "failed",
+                "summary_id": None,
+                "included_count": 0,
+                "failed_count": 1,
+                "skipped_count": 0,
+                "error_message": "No videos included",
+            }
+
+    posted: list[dict] = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, json, timeout):
+        posted.append(json)
+        return FakeResponse()
+
+    monkeypatch.setattr("ypbrief.delivery.requests.post", fake_post)
+
+    client = TestClient(create_app(db=db, digest_runner=FakeRunner(), env_file=tmp_path / "key.env"))
+    client.patch(
+        "/api/delivery-settings",
+        json={"telegram_enabled": True, "telegram_bot_token": "token", "telegram_chat_id": "123456"},
+    )
+    job = client.post(
+        "/api/scheduled-jobs",
+        json={
+            "job_name": "test",
+            "scope_type": "sources",
+            "source_ids": [source_id],
+            "telegram_enabled": True,
+            "email_enabled": False,
+        },
+    ).json()
+
+    response = client.post(f"/api/scheduled-jobs/{job['job_id']}/run-now", json={"now": "2026-04-29T07:00:00+08:00"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["failure_notice_delivered"] is True
+    assert posted
+    text = posted[0]["text"]
+    assert "# test - 2026-04-29 运行失败" in text
+    assert "来源：Exchanges" in text
+    assert "频道：Goldman Sachs" in text
+    assert "视频：How Warsh Could Shape Fed Policy" in text
+    assert "发布时间：2026-04-28" in text
+    assert "https://www.youtube.com/watch?v=HzyrlYgz748" in text
+    assert "原因：Could not fetch transcript: yt-dlp could not fetch subtitles for HzyrlYgz748" in text
+    assert "en-US" not in text
 
 
 def test_api_scheduled_jobs_crud_and_run_groups_window(tmp_path: Path) -> None:
@@ -1685,7 +1795,7 @@ def test_api_model_profiles_use_database_candidates_when_database_models_exist(t
         conn.execute(
             """
             INSERT INTO ModelProfiles(provider, model_name, display_name, is_active)
-            VALUES ('grok', 'grok-4.20-0309-non-reasoning', 'Grok', 1)
+            VALUES ('xai', 'grok-4.20-0309-non-reasoning', 'xAI', 1)
             """
         )
     client = TestClient(
@@ -1698,7 +1808,7 @@ def test_api_model_profiles_use_database_candidates_when_database_models_exist(t
     models = client.get("/api/model-profiles").json()
 
     assert [(item["provider"], item["model_name"]) for item in models] == [
-        ("grok", "grok-4.20-0309-non-reasoning")
+        ("xai", "grok-4.20-0309-non-reasoning")
     ]
     assert "display_name" not in models[0]
 
@@ -1722,7 +1832,7 @@ def test_api_builtin_provider_database_rows_keep_default_urls_when_blank(tmp_pat
     assert claude["base_url"] == "https://api.anthropic.com/v1"
 
 
-def test_api_includes_grok_provider_and_tests_model_connectivity(tmp_path: Path, monkeypatch) -> None:
+def test_api_includes_xai_provider_and_tests_model_connectivity(tmp_path: Path, monkeypatch) -> None:
     db = Database(tmp_path / "ypbrief.db")
     db.initialize()
 
@@ -1733,7 +1843,7 @@ def test_api_includes_grok_provider_and_tests_model_connectivity(tmp_path: Path,
             return "ok"
 
     def fake_provider_from_config(config, model_name):
-        assert config["provider"] == "grok"
+        assert config["provider"] == "xai"
         assert config["base_url"] == "https://api.x.ai/v1"
         assert model_name == "grok-4"
         return FakeProvider()
@@ -1744,12 +1854,12 @@ def test_api_includes_grok_provider_and_tests_model_connectivity(tmp_path: Path,
     client = TestClient(create_app(db=db, env_file=env_file, settings_override={"xai_api_key": "test-key"}))
 
     providers = client.get("/api/llm-providers").json()
-    tested = client.post("/api/model-profiles/test", json={"provider": "grok", "model_name": "grok-4"})
+    tested = client.post("/api/model-profiles/test", json={"provider": "xai", "model_name": "grok-4"})
 
-    grok = next(item for item in providers if item["provider"] == "grok")
-    assert grok["display_name"] == "Grok / xAI"
-    assert grok["base_url"] == "https://api.x.ai/v1"
-    assert grok["default_model"] == ""
+    xai = next(item for item in providers if item["provider"] == "xai")
+    assert xai["display_name"] == "xAI"
+    assert xai["base_url"] == "https://api.x.ai/v1"
+    assert xai["default_model"] == ""
     assert tested.json()["ok"] is True
     assert tested.json()["message"] == "ok"
 
@@ -1762,10 +1872,10 @@ def test_api_provider_update_syncs_key_env(tmp_path: Path) -> None:
     client = TestClient(create_app(db=db, env_file=env_file))
 
     response = client.patch(
-        "/api/llm-providers/grok",
+        "/api/llm-providers/xai",
         json={
             "provider_type": "openai_compatible",
-            "display_name": "Grok / xAI",
+            "display_name": "xAI",
             "base_url": "https://api.x.ai/v1",
             "api_key": "xai-secret",
             "default_model": "grok-4",
@@ -1789,12 +1899,12 @@ def test_api_active_model_syncs_key_env(tmp_path: Path) -> None:
 
     created = client.post(
         "/api/model-profiles",
-        json={"provider": "grok", "model_name": "grok-4.20-0309-non-reasoning", "activate": True},
+        json={"provider": "xai", "model_name": "grok-4.20-0309-non-reasoning", "activate": True},
     )
 
     contents = env_file.read_text(encoding="utf-8")
     assert created.status_code == 200
-    assert "LLM_PROVIDER=grok" in contents
+    assert "LLM_PROVIDER=xai" in contents
     assert "LLM_MODEL=grok-4.20-0309-non-reasoning" in contents
 
 
@@ -1807,7 +1917,7 @@ def test_api_model_profiles_keep_inactive_candidate_models_without_display_name(
         conn.execute(
             """
             INSERT INTO ModelProfiles(provider, model_name, display_name, is_active)
-            VALUES ('grok', 'grok-4.20-0309-reasoning', 'grok-4.20-0309-reasoning', 1)
+            VALUES ('xai', 'grok-4.20-0309-reasoning', 'grok-4.20-0309-reasoning', 1)
             """
         )
         conn.execute(
@@ -1822,7 +1932,7 @@ def test_api_model_profiles_keep_inactive_candidate_models_without_display_name(
 
     assert [(item["provider"], item["model_name"]) for item in models] == [
         ("gemini", "gemini-test"),
-        ("grok", "grok-4.20-0309-reasoning"),
+        ("xai", "grok-4.20-0309-reasoning"),
     ]
     assert "display_name" not in models[0]
     assert models[0]["is_active"] == 0
@@ -1850,7 +1960,7 @@ def test_api_model_connectivity_reports_missing_api_key(tmp_path: Path) -> None:
     db.initialize()
     client = TestClient(create_app(db=db))
 
-    response = client.post("/api/model-profiles/test", json={"provider": "grok", "model_name": "grok-4"})
+    response = client.post("/api/model-profiles/test", json={"provider": "xai", "model_name": "grok-4"})
 
     assert response.status_code == 200
     data = response.json()

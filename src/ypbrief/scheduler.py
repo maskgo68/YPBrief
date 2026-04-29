@@ -57,6 +57,7 @@ class SchedulerService:
             mark_run=lambda run_id: self._mark_job_run(run_id, job_id, run_type),
             send_empty_digest=job["send_empty_digest"],
             telegram_enabled=job["telegram_enabled"],
+            feishu_enabled=job["feishu_enabled"],
             email_enabled=job["email_enabled"],
         )
 
@@ -98,6 +99,7 @@ class SchedulerService:
             "retry_failed_once": True,
             "send_empty_digest": as_bool(self.settings.scheduler_send_empty_digest),
             "telegram_enabled": True,
+            "feishu_enabled": False,
             "email_enabled": False,
         }
 
@@ -123,6 +125,7 @@ class SchedulerService:
         mark_run: Callable[[int | None], None],
         send_empty_digest: bool,
         telegram_enabled: bool | None = None,
+        feishu_enabled: bool | None = None,
         email_enabled: bool | None = None,
     ) -> dict[str, Any]:
         if not source_ids:
@@ -144,6 +147,7 @@ class SchedulerService:
             mark_run=mark_run,
             send_empty_digest=send_empty_digest,
             telegram_enabled=telegram_enabled,
+            feishu_enabled=feishu_enabled,
             email_enabled=email_enabled,
         )
 
@@ -156,6 +160,7 @@ class SchedulerService:
         mark_run: Callable[[int | None], None],
         send_empty_digest: bool,
         telegram_enabled: bool | None = None,
+        feishu_enabled: bool | None = None,
         email_enabled: bool | None = None,
     ) -> dict[str, Any]:
         finalized = dict(result)
@@ -168,6 +173,7 @@ class SchedulerService:
                 digest_language=digest_language,
                 send_empty_digest=send_empty_digest,
                 telegram_enabled=telegram_enabled,
+                feishu_enabled=feishu_enabled,
                 email_enabled=email_enabled,
             )
         if finalized.get("summary_id"):
@@ -175,9 +181,30 @@ class SchedulerService:
                 int(finalized["summary_id"]),
                 run_id,
                 telegram_enabled=telegram_enabled,
+                feishu_enabled=feishu_enabled,
                 email_enabled=email_enabled,
             )
+        elif self._is_failed_without_summary(finalized):
+            deliveries = self.delivery.send_failure_notice(
+                int(run_id),
+                digest_date,
+                digest_language,
+                telegram_enabled=telegram_enabled,
+                feishu_enabled=feishu_enabled,
+                email_enabled=email_enabled,
+            ) if run_id else []
+            finalized["failure_notice_delivered"] = any(item["status"] == "success" for item in deliveries)
+            finalized["deliveries"] = deliveries
         return finalized
+
+    def _is_failed_without_summary(self, result: dict[str, Any]) -> bool:
+        return (
+            not result.get("summary_id")
+            and (
+                result.get("status") == "failed"
+                or int(result.get("failed_count") or 0) > 0
+            )
+        )
 
     def _finalize_no_updates(
         self,
@@ -187,6 +214,7 @@ class SchedulerService:
         digest_language: str,
         send_empty_digest: bool,
         telegram_enabled: bool | None = None,
+        feishu_enabled: bool | None = None,
         email_enabled: bool | None = None,
     ) -> dict[str, Any]:
         run_id = result.get("run_id")
@@ -202,6 +230,7 @@ class SchedulerService:
             digest_language,
             run_id,
             telegram_enabled=telegram_enabled,
+            feishu_enabled=feishu_enabled,
             email_enabled=email_enabled,
         )
         result["empty_digest_delivered"] = any(item["status"] == "success" for item in deliveries)

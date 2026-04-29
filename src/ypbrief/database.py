@@ -16,7 +16,7 @@ _LEGACY_BUILTIN_PROVIDER_MODELS = {
     "claude": "claude-3-5-sonnet-latest",
     "siliconflow": "Qwen/Qwen2.5-72B-Instruct",
     "openrouter": "openai/gpt-4.1-mini",
-    "grok": "grok-4",
+    "xai": "grok-4",
     "deepseek": "deepseek-chat",
 }
 
@@ -252,6 +252,7 @@ class Database:
                     retry_failed_once INTEGER NOT NULL DEFAULT 1,
                     send_empty_digest INTEGER NOT NULL DEFAULT 1,
                     telegram_enabled INTEGER NOT NULL DEFAULT 1,
+                    feishu_enabled INTEGER NOT NULL DEFAULT 0,
                     email_enabled INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -264,6 +265,9 @@ class Database:
                     telegram_chat_id TEXT,
                     telegram_parse_mode TEXT NOT NULL DEFAULT 'Markdown',
                     telegram_send_as_file_if_too_long INTEGER NOT NULL DEFAULT 1,
+                    feishu_enabled INTEGER NOT NULL DEFAULT 0,
+                    feishu_webhook_url TEXT,
+                    feishu_secret TEXT,
                     email_enabled INTEGER NOT NULL DEFAULT 0,
                     smtp_host TEXT,
                     smtp_port INTEGER DEFAULT 587,
@@ -306,6 +310,10 @@ class Database:
             _ensure_column(conn, "Sources", "group_id", "INTEGER REFERENCES SourceGroups(group_id)")
             _ensure_column(conn, "PromptTemplates", "group_id", "INTEGER REFERENCES SourceGroups(group_id)")
             _ensure_column(conn, "DailyRuns", "scheduled_job_id", "INTEGER REFERENCES ScheduledJobs(job_id)")
+            _ensure_column(conn, "ScheduledJobs", "feishu_enabled", "INTEGER NOT NULL DEFAULT 0")
+            _ensure_column(conn, "DeliverySettings", "feishu_enabled", "INTEGER NOT NULL DEFAULT 0")
+            _ensure_column(conn, "DeliverySettings", "feishu_webhook_url", "TEXT")
+            _ensure_column(conn, "DeliverySettings", "feishu_secret", "TEXT")
             conn.execute("UPDATE ScheduledJobs SET window_mode = 'last_7' WHERE window_mode = 'last_5'")
             for provider, model in _LEGACY_BUILTIN_PROVIDER_MODELS.items():
                 conn.execute(
@@ -662,9 +670,9 @@ class Database:
                         job_name, enabled, timezone, run_time, digest_language, scope_type,
                         group_ids_json, source_ids_json, window_mode, max_videos_per_source,
                         process_missing_videos, retry_failed_once, send_empty_digest,
-                        telegram_enabled, email_enabled
+                        telegram_enabled, feishu_enabled, email_enabled
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         values["job_name"],
@@ -681,6 +689,7 @@ class Database:
                         values["retry_failed_once"],
                         values["send_empty_digest"],
                         values["telegram_enabled"],
+                        values["feishu_enabled"],
                         values["email_enabled"],
                     ),
                 )
@@ -703,6 +712,7 @@ class Database:
                         retry_failed_once = ?,
                         send_empty_digest = ?,
                         telegram_enabled = ?,
+                        feishu_enabled = ?,
                         email_enabled = ?,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE job_id = ?
@@ -722,6 +732,7 @@ class Database:
                         values["retry_failed_once"],
                         values["send_empty_digest"],
                         values["telegram_enabled"],
+                        values["feishu_enabled"],
                         values["email_enabled"],
                         job_id,
                     ),
@@ -1220,6 +1231,7 @@ def _scheduled_job_values(payload: dict[str, Any]) -> dict[str, Any]:
         "retry_failed_once": 1 if payload.get("retry_failed_once", True) else 0,
         "send_empty_digest": 1 if payload.get("send_empty_digest", True) else 0,
         "telegram_enabled": 1 if payload.get("telegram_enabled", True) else 0,
+        "feishu_enabled": 1 if payload.get("feishu_enabled", False) else 0,
         "email_enabled": 1 if payload.get("email_enabled", False) else 0,
     }
 
@@ -1234,5 +1246,6 @@ def _scheduled_job_public(row: dict[str, Any]) -> dict[str, Any]:
         "retry_failed_once": bool(row.get("retry_failed_once")),
         "send_empty_digest": bool(row.get("send_empty_digest")),
         "telegram_enabled": bool(row.get("telegram_enabled")),
+        "feishu_enabled": bool(row.get("feishu_enabled")),
         "email_enabled": bool(row.get("email_enabled")),
     }
