@@ -403,5 +403,5 @@ If GitHub Actions Lite uses real sources and real summaries, run it in a private
 
 ## Community & Credits
 
-- Community: Learn AI on L site — [LinuxDO](https://linux.do/).
+- Learn AI on L site — [LinuxDO](https://linux.do/).
 - The early database foundation was inspired by [yt-fts](https://github.com/NotJoeMartinez/yt-fts).

@@ -403,5 +403,5 @@ GitHub Actions Lite 如果使用真实来源和真实总结，建议放在 priva
 
 ## 社区与鸣谢
 
-- 社区：学 AI，上 L 站 — [LinuxDO](https://linux.do/)。
+- 学 AI，上 L 站 — [LinuxDO](https://linux.do/)。
 - 数据库底座的早期设计参考了 [yt-fts](https://github.com/NotJoeMartinez/yt-fts)。
