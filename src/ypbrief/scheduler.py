@@ -42,7 +42,7 @@ class SchedulerService:
         digest_date = self.previous_day(now, job["timezone"])
         if automatic:
             existing = self._existing_job_run(job_id, run_date, job["window_mode"])
-            if existing is not None:
+            if existing is not None and not self._job_updated_after_run(job, existing):
                 return {**existing, "skipped_duplicate": True}
         run_type = "scheduled" if automatic else "scheduled_manual"
         source_ids = self._resolve_job_source_ids(job)
@@ -349,6 +349,14 @@ class SchedulerService:
                     (job_id, run_date, f"-{window_days} day", run_date),
                 ).fetchone()
         return dict(row) if row else None
+
+    @staticmethod
+    def _job_updated_after_run(job: dict[str, Any], run: dict[str, Any]) -> bool:
+        if run.get("status") == "running":
+            return False
+        updated_at = str(job.get("updated_at") or "")
+        created_at = str(run.get("created_at") or "")
+        return bool(updated_at and created_at and updated_at > created_at)
 
     def _latest_job_run(self, job_id: int, run_date: str, window_mode: str) -> dict[str, Any] | None:
         window_days = self._window_days(window_mode)

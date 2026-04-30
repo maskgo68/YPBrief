@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from ypbrief.config import Settings
@@ -1093,3 +1094,71 @@ def test_scheduler_archives_and_notifies_automatic_job_after_retry_failure(tmp_p
     assert posted
     assert "# Failing Job - 2026-04-30 运行失败" in posted[-1]["text"]
     assert "任务原因：Google API read timed out" in posted[-1]["text"]
+
+
+def test_scheduler_allows_automatic_run_after_job_was_updated(tmp_path: Path) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    prompt_file = tmp_path / "prompts.yaml"
+    PromptFileService(prompt_file).save(
+        "daily_digest",
+        system_prompt="正式日报提示词",
+        user_template="日报 {{ run_date }}\n\n{{ summaries }}",
+    )
+    db.upsert_channel("UC123", "Test Channel", "https://youtube.com/channel/UC123")
+    source_id = db.upsert_source(
+        source_type="playlist",
+        source_name="Test Playlist",
+        youtube_id="PL123",
+        url="https://www.youtube.com/playlist?list=PL123",
+        channel_id="UC123",
+        channel_name="Test Channel",
+        playlist_id="PL123",
+    )
+    db.upsert_video("vid1", "UC123", "Episode 1", "https://youtu.be/vid1", video_date="2026-04-29")
+    db.save_summary(
+        summary_type="video",
+        content_markdown="# Summary vid1",
+        provider="gemini",
+        model="gemini-test",
+        video_id="vid1",
+        channel_id="UC123",
+    )
+    youtube = FlakyDiscoveryYouTube(failures=0)
+    runner = DigestRunService(
+        db=db,
+        youtube=youtube,
+        processor=FakeProcessor(db),
+        digest_service=DailyDigestService(db, LenientFakeProvider(), tmp_path / "exports", settings=Settings(prompt_file=prompt_file)),
+    )
+    scheduler = SchedulerService(db, Settings(), runner, delivery=DeliveryService(db, Settings()))
+    job = scheduler.create_job({"job_name": "Edited Job", "scope_type": "sources", "source_ids": [source_id]})
+    with db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO DailyRuns(
+                run_type, status, window_start, window_end, source_ids_json,
+                scheduled_job_id, created_at, completed_at
+            )
+            VALUES ('scheduled', 'completed', '2026-04-29', '2026-04-30', ?, ?, '2026-04-30 00:00:00', '2026-04-30 00:01:00')
+            """,
+            (json.dumps([source_id]), job["job_id"]),
+        )
+        conn.execute(
+            "UPDATE ScheduledJobs SET run_time = '09:30', updated_at = '2026-04-30 01:00:00' WHERE job_id = ?",
+            (job["job_id"],),
+        )
+
+    result = scheduler.run_job_now(job["job_id"], now="2026-04-30T09:30:00+08:00", automatic=True)
+
+    with db.connect() as conn:
+        runs = conn.execute(
+            "SELECT run_id, run_type, status, scheduled_job_id FROM DailyRuns ORDER BY run_id"
+        ).fetchall()
+
+    assert not result.get("skipped_duplicate")
+    assert youtube.calls == 1
+    assert result["status"] == "completed"
+    assert len(runs) == 2
+    assert runs[-1]["run_type"] == "scheduled"
+    assert runs[-1]["scheduled_job_id"] == job["job_id"]
