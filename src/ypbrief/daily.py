@@ -189,11 +189,13 @@ class DigestRunService:
         process_missing_videos: bool = True,
         retry_failed_once: bool = True,
         digest_language: str | None = None,
+        run_type: str = "manual",
+        scheduled_job_id: int | None = None,
     ) -> dict:
         if not source_ids:
             raise ValueError("At least one source_id is required")
         window_start, window_end = _window(run_date, window_days)
-        run_id = self._create_run(source_ids, window_start, window_end)
+        run_id = self._create_run(source_ids, window_start, window_end, run_type, scheduled_job_id)
         included: list[str] = []
         source_ids_by_video: dict[str, int] = {}
         failed: list[tuple[str, int, str]] = []
@@ -307,14 +309,21 @@ class DigestRunService:
             return [self.youtube.get_video(source["url"])]
         raise ValueError(f"Unsupported source type: {source['source_type']}")
 
-    def _create_run(self, source_ids: list[int], window_start: str | None, window_end: str | None) -> int:
+    def _create_run(
+        self,
+        source_ids: list[int],
+        window_start: str | None,
+        window_end: str | None,
+        run_type: str,
+        scheduled_job_id: int | None,
+    ) -> int:
         with self.db.connect() as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO DailyRuns(run_type, status, window_start, window_end, source_ids_json)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO DailyRuns(run_type, status, window_start, window_end, source_ids_json, scheduled_job_id)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                ("manual", "running", window_start, window_end, json.dumps(source_ids)),
+                (run_type, "running", window_start, window_end, json.dumps(source_ids), scheduled_job_id),
             )
             return int(cursor.lastrowid)
 

@@ -172,7 +172,8 @@ const copy = {
     noMarkdown: '没有可复制的 Markdown 内容',
     sendEmptyDigest: '无更新也推送',
     processMissingVideos: '自动处理缺失总结',
-    retryFailedOnce: '失败重试一次',
+    retryFailedOnce: '重试历史失败视频',
+    retryFailedOnceHint: '开启后，下次任务遇到之前失败的视频时会再次尝试处理；关闭后会直接跳过。',
     testTelegram: '测试 Telegram',
     testFeishu: '测试飞书',
     testEmail: '测试 Email',
@@ -418,7 +419,8 @@ const copy = {
     noMarkdown: 'No Markdown content to copy',
     sendEmptyDigest: 'Send no-update notice',
     processMissingVideos: 'Process missing summaries',
-    retryFailedOnce: 'Retry failed once',
+    retryFailedOnce: 'Retry previously failed videos',
+    retryFailedOnceHint: 'When enabled, future runs will try previously failed videos again; when disabled, they are skipped.',
     testTelegram: 'Test Telegram',
     testFeishu: 'Test Feishu',
     testEmail: 'Test Email',
@@ -2652,7 +2654,7 @@ function JobForm({
         </details>
       ) : null}
       <label className="check-row"><input type="checkbox" checked={form.process_missing_videos} onChange={(event) => setForm({ ...form, process_missing_videos: event.target.checked })} />{t.processMissingVideos}</label>
-      <label className="check-row"><input type="checkbox" checked={form.retry_failed_once} onChange={(event) => setForm({ ...form, retry_failed_once: event.target.checked })} />{t.retryFailedOnce}</label>
+      <label className="check-row" title={t.retryFailedOnceHint}><input type="checkbox" checked={form.retry_failed_once} onChange={(event) => setForm({ ...form, retry_failed_once: event.target.checked })} />{t.retryFailedOnce}</label>
       <label className="check-row"><input type="checkbox" checked={form.send_empty_digest} onChange={(event) => setForm({ ...form, send_empty_digest: event.target.checked })} />{t.sendEmptyDigest}</label>
       <label className="check-row"><input type="checkbox" checked={form.telegram_enabled} onChange={(event) => setForm({ ...form, telegram_enabled: event.target.checked })} />Telegram</label>
       <label className="check-row"><input type="checkbox" checked={form.feishu_enabled} onChange={(event) => setForm({ ...form, feishu_enabled: event.target.checked })} />飞书</label>

@@ -45,21 +45,44 @@ class SchedulerService:
             if existing is not None:
                 return {**existing, "skipped_duplicate": True}
         run_type = "scheduled" if automatic else "scheduled_manual"
-        return self._run_digest(
-            source_ids=self._resolve_job_source_ids(job),
-            run_date=run_date,
-            window_days=self._window_days(job["window_mode"]),
-            max_videos_per_source=job["max_videos_per_source"],
-            process_missing_videos=job["process_missing_videos"],
-            retry_failed_once=job["retry_failed_once"],
-            digest_date=digest_date,
-            digest_language=job["digest_language"],
-            mark_run=lambda run_id: self._mark_job_run(run_id, job_id, run_type),
-            send_empty_digest=job["send_empty_digest"],
-            telegram_enabled=job["telegram_enabled"],
-            feishu_enabled=job["feishu_enabled"],
-            email_enabled=job["email_enabled"],
-        )
+        source_ids = self._resolve_job_source_ids(job)
+        attempts = 2 if automatic else 1
+        last_error: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                return self._run_digest(
+                    source_ids=source_ids,
+                    run_date=run_date,
+                    window_days=self._window_days(job["window_mode"]),
+                    max_videos_per_source=job["max_videos_per_source"],
+                    process_missing_videos=job["process_missing_videos"],
+                    retry_failed_once=job["retry_failed_once"],
+                    digest_date=digest_date,
+                    digest_language=job["digest_language"],
+                    mark_run=lambda run_id: self._mark_job_run(run_id, job_id, run_type),
+                    send_empty_digest=job["send_empty_digest"],
+                    telegram_enabled=job["telegram_enabled"],
+                    feishu_enabled=job["feishu_enabled"],
+                    email_enabled=job["email_enabled"],
+                    run_type=run_type,
+                    scheduled_job_id=job_id,
+                )
+            except Exception as exc:
+                last_error = exc
+                if attempt + 1 < attempts:
+                    continue
+                return self._finalize_failed_exception(
+                    job_id=job_id,
+                    run_date=run_date,
+                    digest_date=digest_date,
+                    window_mode=job["window_mode"],
+                    digest_language=job["digest_language"],
+                    error=exc,
+                    telegram_enabled=job["telegram_enabled"],
+                    feishu_enabled=job["feishu_enabled"],
+                    email_enabled=job["email_enabled"],
+                )
+        raise RuntimeError(str(last_error) if last_error else "Scheduled job failed")
 
     @staticmethod
     def previous_day(now: str | None, timezone: str) -> str:
@@ -127,6 +150,8 @@ class SchedulerService:
         telegram_enabled: bool | None = None,
         feishu_enabled: bool | None = None,
         email_enabled: bool | None = None,
+        run_type: str = "manual",
+        scheduled_job_id: int | None = None,
     ) -> dict[str, Any]:
         if not source_ids:
             raise ValueError("At least one source is required")
@@ -139,6 +164,8 @@ class SchedulerService:
             process_missing_videos=process_missing_videos,
             retry_failed_once=retry_failed_once,
             digest_language=digest_language,
+            run_type=run_type,
+            scheduled_job_id=scheduled_job_id,
         )
         return self._finalize_run_result(
             result,
@@ -196,6 +223,37 @@ class SchedulerService:
             finalized["failure_notice_delivered"] = any(item["status"] == "success" for item in deliveries)
             finalized["deliveries"] = deliveries
         return finalized
+
+    def _finalize_failed_exception(
+        self,
+        *,
+        job_id: int,
+        run_date: str,
+        digest_date: str,
+        window_mode: str,
+        digest_language: str,
+        error: Exception,
+        telegram_enabled: bool | None = None,
+        feishu_enabled: bool | None = None,
+        email_enabled: bool | None = None,
+    ) -> dict[str, Any]:
+        run = self._latest_job_run(job_id, run_date, window_mode)
+        if run is None:
+            raise error
+        run_id = int(run["run_id"])
+        deliveries = self.delivery.send_failure_notice(
+            run_id,
+            digest_date,
+            digest_language,
+            telegram_enabled=telegram_enabled,
+            feishu_enabled=feishu_enabled,
+            email_enabled=email_enabled,
+        )
+        return {
+            **run,
+            "failure_notice_delivered": any(item["status"] == "success" for item in deliveries),
+            "deliveries": deliveries,
+        }
 
     def _is_failed_without_summary(self, result: dict[str, Any]) -> bool:
         return (
@@ -283,6 +341,37 @@ class SchedulerService:
                     FROM DailyRuns
                     WHERE run_type = 'scheduled'
                       AND scheduled_job_id = ?
+                      AND window_start = date(?, ?)
+                      AND window_end = ?
+                    ORDER BY run_id DESC
+                    LIMIT 1
+                    """,
+                    (job_id, run_date, f"-{window_days} day", run_date),
+                ).fetchone()
+        return dict(row) if row else None
+
+    def _latest_job_run(self, job_id: int, run_date: str, window_mode: str) -> dict[str, Any] | None:
+        window_days = self._window_days(window_mode)
+        with self.db.connect() as conn:
+            if window_days is None:
+                row = conn.execute(
+                    """
+                    SELECT *
+                    FROM DailyRuns
+                    WHERE scheduled_job_id = ?
+                      AND window_start IS NULL
+                      AND window_end = ?
+                    ORDER BY run_id DESC
+                    LIMIT 1
+                    """,
+                    (job_id, run_date),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT *
+                    FROM DailyRuns
+                    WHERE scheduled_job_id = ?
                       AND window_start = date(?, ?)
                       AND window_end = ?
                     ORDER BY run_id DESC
