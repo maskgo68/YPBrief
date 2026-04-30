@@ -36,6 +36,10 @@ def test_load_settings_reads_key_env_and_runtime_paths(tmp_path: Path) -> None:
     assert settings.log_dir == tmp_path / "local-logs"
 
 
+def test_settings_default_provider_is_openrouter() -> None:
+    assert Settings().llm_provider == "openrouter"
+
+
 def test_load_settings_ignores_comments_and_preserves_empty_values(tmp_path: Path) -> None:
     env_file = tmp_path / "key.env"
     env_file.write_text(

@@ -6,6 +6,7 @@ from email.message import EmailMessage
 import hashlib
 import hmac
 import json
+import logging
 import re
 import smtplib
 import time
@@ -16,6 +17,9 @@ import requests
 from .config import Settings
 from .database import Database
 from .utils import as_bool
+
+
+logger = logging.getLogger(__name__)
 
 
 def mask_secret(value: str) -> str:
@@ -481,6 +485,17 @@ class DeliveryService:
                 (summary_id, run_id, channel, status, target, error, datetime.now(UTC).isoformat(timespec="seconds")),
             )
             row = conn.execute("SELECT * FROM DeliveryLogs WHERE delivery_id = ?", (cursor.lastrowid,)).fetchone()
+        safe_error = _mask_delivery_error(error or "")
+        if status == "success":
+            logger.info("delivery %s success run_id=%s summary_id=%s", channel, run_id, summary_id)
+        else:
+            logger.warning(
+                "delivery %s failed run_id=%s summary_id=%s reason=%s",
+                channel,
+                run_id,
+                summary_id,
+                _short_error(safe_error),
+            )
         return self._public_log(dict(row))
 
     def _existing_run_id(self, run_id: int | None) -> int | None:
@@ -604,6 +619,10 @@ def _mask_telegram_token(value: str) -> str:
 
 def _mask_feishu_webhook(value: str) -> str:
     return re.sub(r"(?<=/bot/v2/hook/)[^/?#\s]+", "***", value)
+
+
+def _mask_delivery_error(value: str) -> str:
+    return _mask_feishu_webhook(_mask_telegram_token(value))
 
 
 def _post_feishu_message(webhook_url: str, text: str, secret: str | None = None) -> None:

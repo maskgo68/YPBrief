@@ -151,6 +151,16 @@ def test_docker_entrypoint_bootstraps_persistent_key_env() -> None:
     assert 'exec "$@"' in entrypoint
 
 
+def test_docker_entrypoint_tees_runtime_logs_to_persistent_file() -> None:
+    entrypoint = (ROOT / "docker-entrypoint.sh").read_text(encoding="utf-8")
+
+    assert "YPBRIEF_LOG_FILE:=/app/logs/ypbrief.log" in entrypoint
+    assert "subprocess.Popen" in entrypoint
+    assert "stderr=subprocess.STDOUT" in entrypoint
+    assert "log.write(line)" in entrypoint
+    assert "sys.stdout.write(line)" in entrypoint
+
+
 def test_github_actions_workflow_uses_safe_allowlist() -> None:
     workflow = (ROOT / ".github" / "workflows" / "github-actions-daily.yml").read_text(encoding="utf-8")
 
@@ -164,6 +174,13 @@ def test_github_actions_workflow_uses_safe_allowlist() -> None:
     assert "source.vtt" not in workflow
     assert "transcript.md" not in workflow
     assert "*.db" not in workflow
+
+
+def test_github_actions_workflow_defaults_to_openrouter_provider() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "github-actions-daily.yml").read_text(encoding="utf-8")
+
+    assert "LLM_PROVIDER: ${{ secrets.LLM_PROVIDER || vars.LLM_PROVIDER || 'openrouter' }}" in workflow
+    assert "LLM_PROVIDER: ${{ secrets.LLM_PROVIDER || vars.LLM_PROVIDER || 'gemini' }}" not in workflow
 
 
 def test_key_env_example_lists_required_provider_keys() -> None:
@@ -200,3 +217,10 @@ def test_key_env_example_lists_required_provider_keys() -> None:
         "CUSTOM_OPENAI_MODEL=",
     ]:
         assert model_key not in example
+
+
+def test_key_env_example_defaults_to_openrouter_provider() -> None:
+    example = (ROOT / "key.env.example").read_text(encoding="utf-8")
+
+    assert "LLM_PROVIDER=openrouter" in example
+    assert "LLM_PROVIDER=gemini" not in example

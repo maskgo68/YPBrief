@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import requests
@@ -155,6 +156,39 @@ def test_send_summary_replaces_digest_title_with_scheduled_job_name(tmp_path: Pa
     assert posted[0]["text"].startswith("# Investment Morning Brief - 2026-04-27")
     assert "Daily Podcast Digest" not in posted[0]["text"].splitlines()[0]
     assert "Body" in posted[0]["text"]
+
+
+def test_delivery_logs_runtime_channel_result(tmp_path: Path, caplog) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    service = DeliveryService(db, Settings(telegram_enabled="true", telegram_bot_token="", telegram_chat_id="1234567890"))
+
+    with caplog.at_level(logging.INFO, logger="ypbrief.delivery"):
+        result = service.send_text("hello", run_date="2026-04-30")
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert result[0]["status"] == "failed"
+    assert any("delivery telegram failed" in message for message in messages)
+    assert all("1234567890" not in message for message in messages)
+
+
+def test_delivery_runtime_logs_mask_telegram_token_and_feishu_webhook(tmp_path: Path, caplog) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    service = DeliveryService(db, Settings())
+    error = (
+        "404 Client Error for https://api.telegram.org/bot123456:secret-token/sendMessage "
+        "and https://open.feishu.cn/open-apis/bot/v2/hook/test-token-secret"
+    )
+
+    with caplog.at_level(logging.WARNING, logger="ypbrief.delivery"):
+        service._log(None, None, "telegram", "failed", "1234567890", error)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("/bot***:***/sendMessage" in message for message in messages)
+    assert any("/bot/v2/hook/***" in message for message in messages)
+    assert all("123456:secret-token" not in message for message in messages)
+    assert all("test-token-secret" not in message for message in messages)
 
 
 def test_send_summary_replaces_video_title_for_single_video(tmp_path: Path, monkeypatch) -> None:

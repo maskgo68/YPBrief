@@ -23,6 +23,7 @@ from ypbrief.daily import DailyDigestService, DigestRunService, daily_artifact_p
 from ypbrief.database import Database
 from ypbrief.delivery import DeliveryService, as_bool, mask_secret
 from ypbrief.delivery import _post_telegram_message, _telegram_message_parts
+from ypbrief.logging_config import configure_runtime_logging
 from ypbrief.llm import ConfigError
 from ypbrief.prompts import DatabasePromptService
 from ypbrief.provider_config import (
@@ -42,6 +43,7 @@ from ypbrief.video_processor import VideoProcessor, parse_video_id
 from ypbrief.youtube import YouTubeDataClient
 
 
+configure_runtime_logging()
 logger = logging.getLogger(__name__)
 
 

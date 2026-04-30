@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 
 from ypbrief.config import Settings
@@ -1094,6 +1095,80 @@ def test_scheduler_archives_and_notifies_automatic_job_after_retry_failure(tmp_p
     assert posted
     assert "# Failing Job - 2026-04-30 运行失败" in posted[-1]["text"]
     assert "任务原因：Google API read timed out" in posted[-1]["text"]
+
+
+def test_scheduler_emits_key_runtime_logs_for_automatic_job(tmp_path: Path, caplog) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    prompt_file = tmp_path / "prompts.yaml"
+    PromptFileService(prompt_file).save(
+        "daily_digest",
+        system_prompt="正式日报提示词",
+        user_template="日报 {{ run_date }}\n\n{{ summaries }}",
+    )
+    source_id = db.upsert_source(
+        source_type="playlist",
+        source_name="Logged Playlist",
+        youtube_id="PLLOG",
+        url="https://www.youtube.com/playlist?list=PL123",
+        enabled=True,
+    )
+    runner = DigestRunService(
+        db=db,
+        youtube=FakeYouTube(),
+        processor=FakeProcessor(db),
+        digest_service=DailyDigestService(db, LenientFakeProvider(), tmp_path / "exports", settings=Settings(prompt_file=prompt_file)),
+    )
+    scheduler = SchedulerService(db, Settings(), runner, delivery=DeliveryService(db, Settings()))
+    job = scheduler.create_job({"job_name": "Logged Job", "scope_type": "sources", "source_ids": [source_id]})
+
+    with caplog.at_level(logging.INFO, logger="ypbrief.scheduler"):
+        result = scheduler.run_job_now(job["job_id"], now="2026-04-25T07:00:00+08:00", automatic=True)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert result["status"] == "completed"
+    assert any("job started: Logged Job" in message for message in messages)
+    assert any(
+        "job finished: Logged Job status=completed included=1 failed=0 skipped=0" in message
+        for message in messages
+    )
+
+
+def test_digest_run_emits_runtime_logs_for_manual_run(tmp_path: Path, caplog) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    prompt_file = tmp_path / "prompts.yaml"
+    PromptFileService(prompt_file).save(
+        "daily_digest",
+        system_prompt="正式日报提示词",
+        user_template="日报 {{ run_date }}\n\n{{ summaries }}",
+    )
+    source_id = db.upsert_source(
+        source_type="playlist",
+        source_name="Manual Playlist",
+        youtube_id="PLMANUAL",
+        url="https://www.youtube.com/playlist?list=PL123",
+        enabled=True,
+    )
+    runner = DigestRunService(
+        db=db,
+        youtube=FakeYouTube(),
+        processor=FakeProcessor(db),
+        digest_service=DailyDigestService(db, LenientFakeProvider(), tmp_path / "exports", settings=Settings(prompt_file=prompt_file)),
+    )
+
+    with caplog.at_level(logging.INFO, logger="ypbrief.daily"):
+        result = runner.run(
+            source_ids=[source_id],
+            run_date="2026-04-25",
+            window_days=1,
+            digest_language="zh",
+        )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert result["status"] == "completed"
+    assert any("digest run started: run_id=" in message for message in messages)
+    assert any("digest run finished: run_id=" in message and "status=completed included=1 failed=0 skipped=0" in message for message in messages)
 
 
 def test_scheduler_allows_automatic_run_after_job_was_updated(tmp_path: Path) -> None:

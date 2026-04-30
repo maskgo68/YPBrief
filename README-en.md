@@ -67,6 +67,8 @@ YPBrief has three common running modes:
 
 Docker/VPS is the full version. It includes the Web UI, database history, complete run records, and maintenance views. GitHub Actions Lite is the lightweight version. It does not run the Web UI and does not keep full database history.
 
+Note: a scheduled job's timezone controls when it triggers and sends; run records, database timestamps, and logs should be interpreted as UTC by default.
+
 ## Basic Configuration
 
 YPBrief needs at least:

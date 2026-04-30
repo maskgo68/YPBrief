@@ -6,6 +6,15 @@ export YPBRIEF_ENV_FILE
 
 mkdir -p /app/data /app/exports /app/logs "$(dirname "$YPBRIEF_ENV_FILE")"
 
+: "${YPBRIEF_LOG_FILE:=/app/logs/ypbrief.log}"
+export YPBRIEF_LOG_FILE
+mkdir -p "$(dirname "$YPBRIEF_LOG_FILE")"
+touch "$YPBRIEF_LOG_FILE"
+
+log_message() {
+  printf '%s\n' "$*" | tee -a "$YPBRIEF_LOG_FILE"
+}
+
 if [ ! -f "$YPBRIEF_ENV_FILE" ]; then
   password="$(python - <<'PY'
 import secrets
@@ -45,10 +54,63 @@ if remaining:
         output.append(f"{key}={value}")
 path.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
 PY
-  echo "Created $YPBRIEF_ENV_FILE"
-  echo "Initial YPBRIEF_ACCESS_PASSWORD: $password"
-  echo "Bootstrapped from /app/key.env.example with Docker runtime defaults."
-  echo "Save this password, then configure YouTube, LLM, proxy, and delivery settings in the Web UI."
+  log_message "Created $YPBRIEF_ENV_FILE"
+  log_message "Initial YPBRIEF_ACCESS_PASSWORD: $password"
+  log_message "Bootstrapped from /app/key.env.example with Docker runtime defaults."
+  log_message "Save this password, then configure YouTube, LLM, proxy, and delivery settings in the Web UI."
+fi
+
+if [ "${YPBRIEF_LOG_TO_FILE:-true}" = "true" ]; then
+  exec python - "$@" <<'PY'
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+
+
+command = sys.argv[1:]
+if not command:
+    raise SystemExit("No command provided")
+
+log_path = Path(os.environ.get("YPBRIEF_LOG_FILE", "/app/logs/ypbrief.log"))
+log_path.parent.mkdir(parents=True, exist_ok=True)
+
+process: subprocess.Popen[str] | None = None
+
+
+def forward_signal(signum, frame):
+    if process is not None and process.poll() is None:
+        process.send_signal(signum)
+
+
+signal.signal(signal.SIGTERM, forward_signal)
+signal.signal(signal.SIGINT, forward_signal)
+
+with log_path.open("a", encoding="utf-8", errors="replace", buffering=1) as log:
+    log.write("\n" + "=" * 78 + "\n")
+    log.write(f"Running: {' '.join(command)}\n")
+    log.write("=" * 78 + "\n")
+    log.flush()
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        log.write(line)
+        log.flush()
+    raise SystemExit(process.wait())
+PY
 fi
 
 exec "$@"

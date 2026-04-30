@@ -19,7 +19,7 @@ def _resolve_path(value: str | Path, base_dir: Path) -> Path:
 class Settings:
     access_password: str = ""
     youtube_data_api_key: str = ""
-    llm_provider: str = "gemini"
+    llm_provider: str = "openrouter"
     llm_model: str = ""
     openai_api_key: str = ""
     openai_base_url: str = ""

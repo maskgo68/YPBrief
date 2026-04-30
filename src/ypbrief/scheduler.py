@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import logging
+import time
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from .config import Settings
 from .database import Database
 from .delivery import DeliveryService, as_bool
+
+
+logger = logging.getLogger(__name__)
 
 
 class SchedulerService:
@@ -43,14 +48,32 @@ class SchedulerService:
         if automatic:
             existing = self._existing_job_run(job_id, run_date, job["window_mode"])
             if existing is not None and not self._job_updated_after_run(job, existing):
+                logger.info(
+                    "job skipped duplicate: %s job_id=%s run_id=%s status=%s window_end=%s",
+                    job["job_name"],
+                    job_id,
+                    existing.get("run_id"),
+                    existing.get("status"),
+                    run_date,
+                )
                 return {**existing, "skipped_duplicate": True}
         run_type = "scheduled" if automatic else "scheduled_manual"
         source_ids = self._resolve_job_source_ids(job)
         attempts = 2 if automatic else 1
         last_error: Exception | None = None
+        started_at = time.monotonic()
+        logger.info(
+            "job started: %s job_id=%s run_type=%s sources=%s window_mode=%s window_end=%s",
+            job["job_name"],
+            job_id,
+            run_type,
+            len(source_ids),
+            job["window_mode"],
+            run_date,
+        )
         for attempt in range(attempts):
             try:
-                return self._run_digest(
+                result = self._run_digest(
                     source_ids=source_ids,
                     run_date=run_date,
                     window_days=self._window_days(job["window_mode"]),
@@ -67,11 +90,20 @@ class SchedulerService:
                     run_type=run_type,
                     scheduled_job_id=job_id,
                 )
+                self._log_job_finished(job, result, started_at)
+                return result
             except Exception as exc:
                 last_error = exc
                 if attempt + 1 < attempts:
+                    logger.warning(
+                        "job retrying: %s job_id=%s attempt=%s error=%s",
+                        job["job_name"],
+                        job_id,
+                        attempt + 1,
+                        _short_log_error(exc),
+                    )
                     continue
-                return self._finalize_failed_exception(
+                result = self._finalize_failed_exception(
                     job_id=job_id,
                     run_date=run_date,
                     digest_date=digest_date,
@@ -82,7 +114,22 @@ class SchedulerService:
                     feishu_enabled=job["feishu_enabled"],
                     email_enabled=job["email_enabled"],
                 )
+                self._log_job_finished(job, result, started_at)
+                return result
         raise RuntimeError(str(last_error) if last_error else "Scheduled job failed")
+
+    def _log_job_finished(self, job: dict[str, Any], result: dict[str, Any], started_at: float) -> None:
+        duration = time.monotonic() - started_at
+        logger.info(
+            "job finished: %s status=%s included=%s failed=%s skipped=%s run_id=%s duration=%.1fs",
+            job["job_name"],
+            result.get("status"),
+            int(result.get("included_count") or 0),
+            int(result.get("failed_count") or 0),
+            int(result.get("skipped_count") or 0),
+            result.get("run_id"),
+            duration,
+        )
 
     @staticmethod
     def previous_day(now: str | None, timezone: str) -> str:
@@ -408,3 +455,8 @@ class SchedulerService:
             "last_3": 3,
             "last_7": 7,
         }.get(window_mode, 1)
+
+
+def _short_log_error(error: Exception) -> str:
+    text = str(error).replace("\n", " ").strip()
+    return text[:180] if len(text) > 180 else text

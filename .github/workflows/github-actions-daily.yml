@@ -66,7 +66,7 @@ jobs:
       YT_DLP_COOKIES_FROM_BROWSER: ${{ secrets.YT_DLP_COOKIES_FROM_BROWSER }}
       YT_DLP_PROXY: ${{ secrets.YT_DLP_PROXY }}
 
-      LLM_PROVIDER: ${{ secrets.LLM_PROVIDER || vars.LLM_PROVIDER || 'gemini' }}
+      LLM_PROVIDER: ${{ secrets.LLM_PROVIDER || vars.LLM_PROVIDER || 'openrouter' }}
       LLM_MODEL: ${{ secrets.LLM_MODEL || vars.LLM_MODEL }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL || vars.OPENAI_BASE_URL }}

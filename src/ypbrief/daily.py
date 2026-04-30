@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 import json
+import logging
 from pathlib import Path
+import time
 from typing import Protocol
 
 from .config import Settings
@@ -11,6 +13,9 @@ from .database import Database
 from .prompts import DEFAULT_PROMPTS, DatabasePromptService
 from .text_normalization import clean_summary_markdown
 from .video_processor import MIN_SUMMARY_VIDEO_SECONDS
+
+
+logger = logging.getLogger(__name__)
 
 
 class DigestProvider(Protocol):
@@ -196,6 +201,16 @@ class DigestRunService:
             raise ValueError("At least one source_id is required")
         window_start, window_end = _window(run_date, window_days)
         run_id = self._create_run(source_ids, window_start, window_end, run_type, scheduled_job_id)
+        started_at = time.monotonic()
+        logger.info(
+            "digest run started: run_id=%s run_type=%s scheduled_job_id=%s sources=%s window_start=%s window_end=%s",
+            run_id,
+            run_type,
+            scheduled_job_id,
+            len(source_ids),
+            window_start,
+            window_end,
+        )
         included: list[str] = []
         source_ids_by_video: dict[str, int] = {}
         failed: list[tuple[str, int, str]] = []
@@ -269,9 +284,11 @@ class DigestRunService:
                 status = "no_updates"
                 error_message = None
             self._complete_run(run_id, status, summary_id, len(unique_included), len(failed), len(skipped), error_message)
+            _log_digest_run_finished(run_id, status, len(unique_included), len(failed), len(skipped), started_at)
             return self.get_run(run_id)
         except Exception as exc:
             self._complete_run(run_id, "failed", None, len(set(included)), len(failed), len(skipped), str(exc))
+            _log_digest_run_finished(run_id, "failed", len(set(included)), len(failed), len(skipped), started_at)
             raise
 
     def get_run(self, run_id: int) -> dict:
@@ -433,6 +450,18 @@ def _default_daily_prompt_input(digest_input: str, run_date: str, digest_languag
         user_prompt = user_prompt.replace("{{ " + key + " }}", str(value))
         user_prompt = user_prompt.replace("{{" + key + "}}", str(value))
     return system_prompt, user_prompt
+
+
+def _log_digest_run_finished(run_id: int, status: str, included: int, failed: int, skipped: int, started_at: float) -> None:
+    logger.info(
+        "digest run finished: run_id=%s status=%s included=%s failed=%s skipped=%s duration=%.1fs",
+        run_id,
+        status,
+        included,
+        failed,
+        skipped,
+        time.monotonic() - started_at,
+    )
 
 
 def daily_artifact_paths(export_dir: str | Path, run_date: str, now: datetime | None = None) -> tuple[Path, Path, Path]:
