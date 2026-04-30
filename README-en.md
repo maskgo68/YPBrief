@@ -400,3 +400,8 @@ The full Web UI and Docker/VPS deployment will remain the main product form. Ski
 If you deploy YPBrief on the public internet, use a strong access password and protect the server carefully. Do not expose `key.env`.
 
 If GitHub Actions Lite uses real sources and real summaries, run it in a private repository.
+
+## Community & Credits
+
+- Community: Learn AI on L site — [LinuxDO](https://linux.do/).
+- The early database foundation was inspired by [yt-fts](https://github.com/NotJoeMartinez/yt-fts).
