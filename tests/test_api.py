@@ -1809,6 +1809,160 @@ def test_api_scheduled_job_failure_delivers_short_failure_notice(tmp_path: Path,
     assert "en-US" not in text
 
 
+def test_api_scheduled_job_failure_notice_keeps_proxy_parse_hint(tmp_path: Path, monkeypatch) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    source_id = db.upsert_source(
+        source_type="playlist",
+        source_name="In the Money",
+        youtube_id="PLITM",
+        url="https://www.youtube.com/playlist?list=PLITM",
+        channel_name="In the Money",
+        enabled=True,
+    )
+    db.upsert_channel("UCITM", "In the Money", "https://www.youtube.com/@InTheMoney")
+    db.upsert_video(
+        "8GQbDni9faY",
+        "UCITM",
+        "Beating the Market with Small Caps",
+        "https://www.youtube.com/watch?v=8GQbDni9faY",
+        "2026-04-30",
+    )
+
+    class FakeRunner:
+        def run(self, **kwargs):
+            with db.connect() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO DailyRuns(run_type, status, window_start, window_end, source_ids_json, failed_count, error_message)
+                    VALUES ('manual', 'failed', '2026-04-30', '2026-05-01', ?, 1, 'No videos included')
+                    """,
+                    (json.dumps(kwargs["source_ids"]),),
+                )
+                run_id = int(cursor.lastrowid)
+                conn.execute(
+                    """
+                    INSERT INTO DailyRunVideos(
+                        run_id, video_id, source_id, source_name_snapshot,
+                        display_name_snapshot, source_type_snapshot, status, action, error_message
+                    )
+                    VALUES (?, '8GQbDni9faY', ?, 'In the Money', 'In the Money with Amber Kanwar',
+                            'playlist', 'failed', 'process', ?)
+                    """,
+                    (
+                        run_id,
+                        source_id,
+                        "Could not fetch transcript for 8GQbDni9faY: yt-dlp=yt-dlp could not fetch subtitles for 8GQbDni9faY: en-US=Failed to parse: http://geo.iproyal.com:12321:user:pass; en=Failed to parse: http://geo.iproyal.com:12321:user:pass",
+                    ),
+                )
+            return {
+                "run_id": run_id,
+                "status": "failed",
+                "summary_id": None,
+                "included_count": 0,
+                "failed_count": 1,
+                "skipped_count": 0,
+                "error_message": "No videos included",
+            }
+
+    posted: list[dict] = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, json, timeout):
+        posted.append(json)
+        return FakeResponse()
+
+    monkeypatch.setattr("ypbrief.delivery.requests.post", fake_post)
+
+    client = TestClient(create_app(db=db, digest_runner=FakeRunner(), env_file=tmp_path / "key.env"))
+    client.patch(
+        "/api/delivery-settings",
+        json={"telegram_enabled": True, "telegram_bot_token": "token", "telegram_chat_id": "123456"},
+    )
+    job = client.post(
+        "/api/scheduled-jobs",
+        json={
+            "job_name": "Invest Daily",
+            "scope_type": "sources",
+            "source_ids": [source_id],
+            "telegram_enabled": True,
+            "email_enabled": False,
+        },
+    ).json()
+
+    response = client.post(f"/api/scheduled-jobs/{job['job_id']}/run-now", json={"now": "2026-05-01T07:00:00+08:00"})
+
+    assert response.status_code == 200
+    text = posted[0]["text"]
+    assert "原因：Proxy URL invalid: use http://username:password@host:port" in text
+    assert "geo.iproyal.com:12321:user:pass" not in text
+
+
+def test_api_test_proxy_rejects_invalid_proxy_url(tmp_path: Path) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    client = TestClient(
+        create_app(
+            db=db,
+            settings_override={
+                "youtube_proxy_enabled": "true",
+                "youtube_proxy_http": "geo.iproyal.com:12321:user:pass",
+                "youtube_proxy_https": "geo.iproyal.com:12321:user:pass",
+                "yt_dlp_proxy": "geo.iproyal.com:12321:user:pass",
+            },
+        )
+    )
+
+    response = client.post("/api/health/test-proxy")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["configured"] is True
+    assert data["ok"] is False
+    assert "http://username:password@host:port" in data["message"]
+
+
+def test_api_test_proxy_performs_network_probe(tmp_path: Path, monkeypatch) -> None:
+    db = Database(tmp_path / "ypbrief.db")
+    db.initialize()
+    calls: list[dict] = []
+
+    class FakeResponse:
+        status_code = 204
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, proxies, timeout):
+        calls.append({"url": url, "proxies": proxies, "timeout": timeout})
+        return FakeResponse()
+
+    monkeypatch.setattr(app_module.requests, "get", fake_get)
+    client = TestClient(
+        create_app(
+            db=db,
+            settings_override={
+                "youtube_proxy_enabled": "true",
+                "youtube_proxy_http": "http://user:pass@geo.iproyal.com:12321",
+                "youtube_proxy_https": "http://user:pass@geo.iproyal.com:12321",
+                "yt_dlp_proxy": "http://user:pass@geo.iproyal.com:12321",
+            },
+        )
+    )
+
+    response = client.post("/api/health/test-proxy")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert "probe ok" in data["message"]
+    assert calls[0]["url"].startswith("https://www.youtube.com/")
+    assert calls[0]["proxies"]["https"] == "http://user:pass@geo.iproyal.com:12321"
+
+
 def test_api_scheduled_jobs_crud_and_run_groups_window(tmp_path: Path) -> None:
     db = Database(tmp_path / "ypbrief.db")
     db.initialize()

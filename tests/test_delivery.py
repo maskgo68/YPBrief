@@ -1,11 +1,61 @@
 import logging
 from pathlib import Path
 
+import pytest
 import requests
 
 from ypbrief.config import Settings
 from ypbrief.database import Database
-from ypbrief.delivery import DeliveryService
+from ypbrief.delivery import DeliveryService, _short_error
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (
+            "API key not valid. Please pass a valid API key.",
+            "YouTube API key invalid or missing",
+        ),
+        (
+            "quotaExceeded: The request cannot be completed because you have exceeded your quota.",
+            "YouTube API quota exceeded",
+        ),
+        (
+            "HTTPSConnectionPool(host='www.googleapis.com', port=443): Read timed out.",
+            "YouTube API request timed out or network is unstable",
+        ),
+        (
+            "Proxy probe failed: 407 Proxy Authentication Required",
+            "Proxy authentication failed; check username and password",
+        ),
+        (
+            "Proxy probe failed: ConnectTimeoutError proxy timeout",
+            "Proxy connection failed or timed out",
+        ),
+        (
+            "ERROR: [youtube] vid1: This video is unavailable",
+            "YouTube video unavailable or private",
+        ),
+        (
+            "ERROR: Unable to download video subtitles for 'en': HTTP Error 429: Too Many Requests",
+            "YouTube rate limited the request; try again later or switch proxy",
+        ),
+        (
+            "API key is required for openrouter",
+            "LLM API key missing or invalid",
+        ),
+        (
+            "Error code: 404 - model not found",
+            "LLM model not found or unavailable",
+        ),
+        (
+            "Error code: 429 - Some resource has been exhausted; monthly spending limit reached",
+            "LLM quota exhausted or monthly spending limit reached",
+        ),
+    ],
+)
+def test_short_error_classifies_configuration_layers(raw: str, expected: str) -> None:
+    assert _short_error(raw) == expected
 
 
 def test_telegram_delivery_splits_long_digest_into_multiple_messages(tmp_path: Path, monkeypatch) -> None:

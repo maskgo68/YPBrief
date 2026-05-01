@@ -1,4 +1,5 @@
 # Local secrets and credentials
+项目常用命令与api密钥.txt
 key.env
 key.env.*
 !key.env.example

@@ -12,7 +12,9 @@ import time
 from datetime import date
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
+import requests
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -391,10 +393,48 @@ def create_app(
     @app.post("/api/health/test-proxy")
     def test_proxy() -> dict[str, Any]:
         effective_proxy = settings.youtube_proxy_url
+        effective_yt_dlp_proxy = settings.yt_dlp_proxy_url
+        configured_proxy = effective_proxy or effective_yt_dlp_proxy
+        if not configured_proxy:
+            return {
+                "configured": False,
+                "enabled": False,
+                "ok": False,
+                "message": "Proxy disabled or missing",
+            }
+        for label, proxy_url in [
+            ("Proxy", effective_proxy),
+            ("yt-dlp proxy", effective_yt_dlp_proxy),
+        ]:
+            error = _proxy_url_error(proxy_url)
+            if error:
+                return {
+                    "configured": True,
+                    "enabled": True,
+                    "ok": False,
+                    "message": f"{label} URL invalid: {error}",
+                }
+        probe_proxy = effective_proxy or effective_yt_dlp_proxy
+        proxies = settings.requests_proxies or {"http": probe_proxy, "https": probe_proxy}
+        try:
+            response = requests.get(
+                "https://www.youtube.com/generate_204",
+                proxies=proxies,
+                timeout=10,
+            )
+            response.raise_for_status()
+        except Exception as exc:
+            return {
+                "configured": True,
+                "enabled": True,
+                "ok": False,
+                "message": f"Proxy probe failed: {_safe_proxy_error(exc)}",
+            }
         return {
-            "configured": bool(effective_proxy),
-            "enabled": bool(effective_proxy),
-            "message": "Proxy configured" if effective_proxy else "Proxy disabled or missing",
+            "configured": True,
+            "enabled": True,
+            "ok": True,
+            "message": "Proxy probe ok: YouTube reachable",
         }
 
     @app.post("/api/health/test-database")
@@ -1513,6 +1553,30 @@ def _mask_proxy_url(proxy_url: str) -> str:
         return proxy_url
     scheme, rest = proxy_url.split("://", 1)
     return f"{scheme}://***:***@{rest.split('@', 1)[1]}"
+
+
+def _proxy_url_error(proxy_url: str) -> str | None:
+    if not proxy_url:
+        return None
+    parsed = urlparse(proxy_url)
+    if parsed.scheme not in {"http", "https"}:
+        return "use http://username:password@host:port"
+    if not parsed.hostname:
+        return "missing host; use http://username:password@host:port"
+    try:
+        port = parsed.port
+    except ValueError:
+        return "invalid port; use http://username:password@host:port"
+    if port is None:
+        return "missing port; use http://username:password@host:port"
+    return None
+
+
+def _safe_proxy_error(exc: Exception) -> str:
+    text = re.sub(r"\s+", " ", str(exc)).strip()
+    text = re.sub(r"https?://([^:@/\s]+):([^@/\s]+)@", "http://***:***@", text)
+    text = re.sub(r"(geo\.iproyal\.com:\d+):[^\s;]+", r"\1:***", text)
+    return text[:220] or exc.__class__.__name__
 
 
 def _update_env_file(env_file: Path, updates: dict[str, str]) -> None:

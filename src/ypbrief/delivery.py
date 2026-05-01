@@ -659,6 +659,31 @@ def _short_error(value: Any, limit: int = 220) -> str:
     text = _one_line(value)
     if not text:
         return "-"
+    lower_text = text.lower()
+    if "some resource has been exhausted" in lower_text or "monthly spending limit" in lower_text or "available credits" in lower_text:
+        return "LLM quota exhausted or monthly spending limit reached"
+    if "api key is required for" in lower_text or "incorrect api key" in lower_text or "invalid api key" in lower_text:
+        return "LLM API key missing or invalid"
+    if "model not found" in lower_text or "model_not_found" in lower_text or "model is not found" in lower_text:
+        return "LLM model not found or unavailable"
+    if "api key not valid" in lower_text or "youtube api key" in lower_text and ("invalid" in lower_text or "missing" in lower_text):
+        return "YouTube API key invalid or missing"
+    if "quotaexceeded" in lower_text or "dailylimitexceeded" in lower_text or ("youtube" in lower_text and "quota" in lower_text and "exceed" in lower_text):
+        return "YouTube API quota exceeded"
+    if "www.googleapis.com" in lower_text and ("timed out" in lower_text or "timeout" in lower_text or "connection" in lower_text):
+        return "YouTube API request timed out or network is unstable"
+    if "Failed to parse:" in text:
+        return "Proxy URL invalid: use http://username:password@host:port"
+    if "proxy" in lower_text and ("407" in lower_text or "authentication" in lower_text or "auth" in lower_text):
+        return "Proxy authentication failed; check username and password"
+    if "proxy" in lower_text and ("timeout" in lower_text or "timed out" in lower_text or "connection" in lower_text or "connect" in lower_text):
+        return "Proxy connection failed or timed out"
+    if "Sign in to confirm" in text and "not a bot" in text:
+        return "YouTube bot check blocked the request; try a higher-quality proxy or cookies"
+    if "video is unavailable" in lower_text or "private video" in lower_text:
+        return "YouTube video unavailable or private"
+    if "HTTP Error 429" in text or "Too Many Requests" in text:
+        return "YouTube rate limited the request; try again later or switch proxy"
     transcript_match = re.search(r"Could not fetch transcript for ([\w-]+)", text)
     subtitle_match = re.search(r"yt-dlp could not fetch subtitles for ([\w-]+)", text)
     if transcript_match and subtitle_match:
